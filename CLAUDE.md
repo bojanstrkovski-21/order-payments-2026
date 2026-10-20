@@ -53,7 +53,8 @@ Settings: copy `app/settings.example.ini` to `app/settings.ini` and fill in the 
   `tools/delphi_listing.py` (Capstone listing with field names and strings — Ghidra misses many Delphi handlers and
   REA cannot create functions on Windows), `tools/param_map.py` (which value goes into which SQL parameter).
   Confirm findings against the real data before relying on them.
-- REA MCP + Ghidra 12.1.4 are configured in `.mcp.json` (local, read-only Windows mode).
+- REA MCP + Ghidra 12.1.4 are configured in `.mcp.json` (local, read-only Windows mode). Reopen the old program
+  quickly with `open_binary` path `Nalozi\NOVNAL.exe` + `snapshot_path` `work\rea\novnal_exe.snapshot` (local).
 - Git: branch `main` → https://github.com/bojanstrkovski-21/order-payments-2026 (public). Commit and push after each
   finished piece; check that no database files, passwords or real names/accounts/EMBG are staged.
 
