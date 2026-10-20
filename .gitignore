@@ -1,0 +1,25 @@
+# Old program and databases: personal data (names, accounts, EMBG) — never commit
+Nalozi/
+work/
+*.fdb
+*.FDB
+*.gdb
+*.GDB
+*.fbk
+
+# Local settings with the database password; copy app/settings.example.ini to app/settings.ini
+app/settings.ini
+
+# Machine-specific tool configuration (local Ghidra/Java paths)
+.mcp.json
+
+# Reverse-engineering output of the old program (decompiled code, listings, form dumps)
+extracted/asm/
+extracted/decomp/
+extracted/forms/
+
+# Python
+demo/.venv/
+.venv/
+__pycache__/
+*.pyc
