@@ -62,4 +62,10 @@ Settings: copy `app/settings.example.ini` to `app/settings.ini` and fill in the 
 Done and tested: main window, shipment screen (open, delete, booking), **all 7 order forms** (60, 61, 62, 70, 73, 76,
 80), working-day defaults.
 Next: Копирање, Печатење („Список", „Спецификација"), **Сними** (USB file, byte-identical to the old program's),
-then the registers (partners, employees, accounts), reports, login/operators, Превземање на налози, the database move.
+then the registers (partners, employees, accounts), reports, login/operators, Превземање на налози, the database move,
+and finally a custom theme.
+
+## Keeping this file current
+
+This file is the canonical project record. Claude also keeps private notes outside the repository (credentials,
+personal-data warnings, machine state) — update both together when anything changes, and never let them contradict.
