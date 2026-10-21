@@ -8,7 +8,7 @@ in `extracted/*_spec.md`. The repository is **public** — never commit personal
 
 - **Python 3.14 + wxPython 4.3** (Office 2010 style `wx.ribbon`), Firebird via the pure-Python `firebirdsql` driver.
   Virtual environment: `demo/.venv` (wxPython, firebirdsql, passlib, pefile, capstone, fonttools, pillow).
-- `app/` — the new program: `main.py` (window + ribbon), `shipment.py` (ВНЕСУВАЊЕ НА НАЛОЗИ), `reports.py` (print-outs), `orders.py` (all order
+- `app/` — the new program: `main.py` (window + ribbon), `shipment.py` (ВНЕСУВАЊЕ НА НАЛОЗИ), `reports.py` (print-outs), `tdb.py` (USB file), `orders.py` (all order
   forms), `db.py` (all database access), `macc.py` (MAC C ↔ Cyrillic), `workdays.py` + `holidays.txt`, `ui.py`.
 - `tools/` — reverse-engineering helpers and the tests (`test_*.py`).
 - `extracted/` — recovered specifications (`vnnal_spec.md`, `nalXX_spec.md`), schema, SQL lists, handler map.
@@ -47,7 +47,8 @@ Settings: copy `app/settings.example.ini` to `app/settings.ini` and fill in the 
 - **Налог 73** is filed under its shipment like every other type (old program swapped valdat/datkniz).
 - Delete/edit change exactly one row (the old delete could remove several identical orders).
 - **Копирање**: copies get no Датум на доспевање (as the old program) — the user sets the dates on each copy.
-- The **USB payment file** („Сними") must stay in the old MAC C encoding — encode with `macc.encode` on export.
+- The **USB payment file** („Сними", `tdb.py`) stays in the old MAC C encoding and is byte-identical to the old
+  program's files (`extracted/tdb_spec.md`; check with `tools/compare_tdb.py` against real files kept outside the repo).
 
 ## How to work
 
@@ -76,11 +77,11 @@ Settings: copy `app/settings.example.ini` to `app/settings.ini` and fill in the 
 
 ## Progress
 
-Done and tested: main window, shipment screen (open, delete, booking, **копирање**, **печатење**), **all 7 order forms** (60, 61, 62,
+Done and tested: main window, shipment screen (open, delete, booking, **копирање**, **печатење**, **сними**), **all 7 order forms** (60, 61, 62,
 70, 73, 76, 80), working-day defaults.
-Next: **Сними** (USB file, byte-identical to the old program's),
-then the registers (partners, employees, accounts), reports, login/operators, Превземање на налози, the move to
-SQLite, and finally a custom theme.
+The shipment screen is complete (every old button rebuilt).
+Next: the registers (Шифрарник: генералии, сметки, конта, оператори, жиро-сметки/партнери, вработени), the report
+„Преглед на пратки по датум", login/operators, „Превземање на налози", the move to SQLite, and finally a custom theme.
 
 ## Keeping this file current
 

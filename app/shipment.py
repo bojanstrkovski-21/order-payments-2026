@@ -9,6 +9,7 @@ import db
 import macc
 import orders
 import reports
+import tdb
 import ui
 
 # (title, column, width) — same columns and order as the old grid.
@@ -325,6 +326,30 @@ class ShipmentPanel(wx.Panel):
         finally:
             dlg.Destroy()
         self._printer = reports.preview(self, self._context(), self.orders, kind, copies)
+
+    def save_file(self):
+        """СНИМИ — write the treasury file (*.TDB, MAC C, byte-identical to the old program). Booked shipments only."""
+        if not self.is_open:
+            return
+        if not self.is_booked:
+            ui.info(self, "ОВАА ПРАТКА НЕ Е ПРОКНИЖАНА")
+            return
+        pratka, day = self.shipment
+        init = db.get_init()
+        extension = (init.get("trzkodkor") or "TDB").strip()
+        dlg = wx.FileDialog(self, "Сними", defaultFile=tdb.file_name(pratka, day, extension),
+                            wildcard=f"FORMAT ZA TREZOR (*.{extension})|*.{extension}",
+                            style=wx.FD_SAVE | wx.FD_OVERWRITE_PROMPT)
+        try:
+            if dlg.ShowModal() != wx.ID_OK:
+                return
+            path = dlg.GetPath()
+        finally:
+            dlg.Destroy()
+        data = tdb.build(init, self.booking, [o["_raw"] for o in db.shipment_orders(pratka, day)])
+        with open(path, "wb") as f:
+            f.write(data)
+        ui.info(self, "ПОДАТОЦИТЕ СЕ СНИМЕНИ")
 
     def copy_refusal(self, src_pratka, src_day):
         """Why the source shipment cannot be copied into this one, or None."""
