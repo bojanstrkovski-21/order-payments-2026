@@ -35,13 +35,25 @@ Esc in the grid resets the screen to an empty header.
 | Button | Handler | Behaviour |
 |---|---|---|
 | Налог 60/61/62/70/73/76/80 | `JVSpeedButton1Click`… | Open the order form of that type for this shipment (TNAL60…TNAL80). *Not yet analysed.* |
-| Копирање | `JvSpeedButton11Click` → GroupBox2 | Copy orders from another shipment (Пратка бр. + Датум на валута). *Not yet analysed.* |
+| Копирање | `JvSpeedButton11Click` → GroupBox2 | Copy orders from another shipment (see below). |
 | Ажурирање | `JvSpeedButton5Click` | Edit the selected order in its form. *Not yet analysed.* |
 | Бришење | `JVSpeedButton6Click` | Confirm „ОВОЈ ЗАПИС ЌЕ БИДЕ ИЗБРИШАН !" (ОК / Не); delete the current order; subtract its amount from the total. |
 | Книжење | `JVSpeedButton7Click` → GroupBox3 | No orders → „НЕМА НИШТО ЗА КНИЖЕЊЕ". Else ask Датум на поднесување, Датум на валута, Плата (Д/Н). |
 | Печатење | `JVSpeedButton8Click` → GroupBox1 | Вид: Spisok / Specifikacija, Br. na kopii. *Not yet analysed.* |
 | Сними | `JvSpeedButton9Click` | Save to file (SaveDialog). *Not yet analysed.* |
 | Излез | `JVSpeedButton10Click` | Close. |
+
+### Copy (`JvSpeedButton11Click`, `brpr1Exit`, `MaskEdit2Exit`, `JvXPButton3Click`)
+Dialog „KOPIRAWE" — „SO OVAA AKCIJA SE VR[I KOPIRAWE NA PODATOCITE OD PRATKATA KOJA ]E JA NAVEDITE !":
+Пратка бр. (empty → „ВНЕСЕТЕ БРОЈ НА ПРАТКА!") and Датум на валута (empty → „ВНЕСЕТЕ ДАТУМ", invalid → „НЕИСПРАВЕН ДАТУМ").
+The source must be a **booked** shipment (`kniz` row), else „НЕ ПОСТОИ ТАКВА ПРАТКА!".
+For every source order (`order by rbr`) an insert copies all columns positionally (the query's field order equals the
+insert column order) except: `pratka` = current shipment, `datkniz` = `valdat` = current shipment date,
+`datpod` = today, `brkniz` = ''. `datdos`/`dosdat` are not in the insert (copies have no due date). `rbr` is copied as is.
+
+**New app** (`db.copy_shipment`, `ShipmentPanel.copy_refusal`): one transaction; copies are numbered after the current
+shipment's last `rbr` (the old copy duplicated numbers); refused when the source belongs to another account
+(„ОВАА ПРАТКА Е ОД ДРУГА СМЕТКА"), is the same shipment, has no orders, or would break the 62/70 mixing rule.
 
 ### Delete — old behaviour and the fix
 Old SQL (`IBUpdateSQL4.DeleteSQL`): `delete from promet where pratka, datkniz, vidobr, iznos, sifprim, sifsmet` match.

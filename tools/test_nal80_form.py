@@ -51,7 +51,7 @@ check("recipient account = treasury account (as all 61 real orders)", o["smetpri
 check("EMBG in edb, ID card in povik1", (o["edb"], o["povik1"]) == (person["embg"], person["brlk"]))
 raw_brlk = db.connect().cursor()
 raw_brlk.execute("select brlk from partneri where sifra=?", (person["sifra"],))
-check("stored ID card bytes identical to the register", o["_raw"]["povik1"].rstrip() == raw_brlk.fetchone()[0].rstrip())
+check("stored ID card bytes identical to the register", o["_raw"]["povik1"].rstrip() == db._first(raw_brlk)[0].rstrip())
 check("recipient name and place", (o["nazprim1"], o["nazprim2"]) == (person["naziv"], person["mesto"]))
 check("amount 3.000,00, due date 20261231", abs(o["iznos"] - 3000) < 1e-9 and o["dosdat"] == "20261231")
 

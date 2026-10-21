@@ -16,7 +16,7 @@ def count(sql, params=()):
     con = db.connect()
     cur = con.cursor()
     cur.execute(sql, params)
-    n = cur.fetchone()[0]
+    n = db._first(cur)[0]
     con.close()
     return n
 
@@ -28,7 +28,7 @@ cur.execute(
     "select first 1 pratka, datkniz, vidobr, iznos, sifprim, sifsmet, count(*) from promet "
     "group by 1,2,3,4,5,6 having count(*) > 1"
 )
-pratka, datkniz, *_ = cur.fetchone()
+pratka, datkniz, *_ = db._first(cur)
 con.close()
 day = datkniz.date()
 orders = db.shipment_orders(pratka, day)
@@ -48,7 +48,7 @@ cur.execute(
     "where not exists (select 1 from kniz k where k.pratka=p.pratka and k.datkniz=p.datkniz) "
     "group by 1,2,3 order by 2 desc"
 )
-pratka, datkniz, sifsmet, n, total = cur.fetchone()
+pratka, datkniz, sifsmet, n, total = db._first(cur)
 con.close()
 valuta = dt.date(2026, 10, 22)
 knizbr = db.book_shipment(pratka, datkniz.date(), sifsmet.strip(), dt.date(2026, 10, 21), valuta, False, n, total)

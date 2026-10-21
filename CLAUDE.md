@@ -26,6 +26,9 @@ Settings: copy `app/settings.example.ini` to `app/settings.ini` and fill in the 
 - Old schema quirks: text is stored in the **MAC C** font encoding (ASCII drawn as Cyrillic by the „MAC C Swiss"
   font; `` ` ~ { } | q w x y c j `` = ж ч ш ќ ѓ љ њ џ ѕ ц ј) — `macc.py` converts both ways. Amounts are `FLOAT`.
   No primary keys and duplicate rows/`rbr` exist, so single-row update/delete uses `RDB$DB_KEY` (`db.py`).
+- **firebirdsql pitfall:** a `SELECT` followed by an `UPDATE`/`DELETE` on the same connection can fail intermittently
+  (`op_code = 66`, a late fetch answer). Find the row inside the changing statement (`db._one_row`) and read results
+  with `db._first` (drains the cursor), never `fetchone()`. Run the suite several times in a row after DB changes.
 - Later: possible move to SQLite (one PC) or PostgreSQL (several users) — waiting for the user's answer.
 
 ## Decisions by the user (differences from the old program)
@@ -60,9 +63,9 @@ Settings: copy `app/settings.example.ini` to `app/settings.ini` and fill in the 
 
 ## Progress
 
-Done and tested: main window, shipment screen (open, delete, booking), **all 7 order forms** (60, 61, 62, 70, 73, 76,
-80), working-day defaults.
-Next: Копирање, Печатење („Список", „Спецификација"), **Сними** (USB file, byte-identical to the old program's),
+Done and tested: main window, shipment screen (open, delete, booking, **копирање**), **all 7 order forms** (60, 61, 62,
+70, 73, 76, 80), working-day defaults.
+Next: Печатење („Список", „Спецификација"), **Сними** (USB file, byte-identical to the old program's),
 then the registers (partners, employees, accounts), reports, login/operators, Превземање на налози, the database move,
 and finally a custom theme.
 

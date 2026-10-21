@@ -35,6 +35,16 @@ def connect():
     )
 
 
+def _first(cur):
+    """First row of a result, reading the result to the end.
+
+    firebirdsql can leave the rest of a result pending after fetchone(); running the next statement on the
+    same connection then fails intermittently ("op_code = 66"). Always drain before the next statement.
+    """
+    rows = cur.fetchall()
+    return rows[0] if rows else None
+
+
 def _rows(cur):
     names = [d[0].lower() for d in cur.description]
     return [dict(zip(names, values)) for values in cur.fetchall()]
@@ -176,7 +186,7 @@ def shipment_has_type(pratka: str, day: dt.date, vidobr: str) -> bool:
     try:
         cur = con.cursor()
         cur.execute("select count(*) from promet where pratka=? and datkniz=? and vidobr=?", (pratka, day, vidobr))
-        return cur.fetchone()[0] > 0
+        return _first(cur)[0] > 0
     finally:
         con.close()
 
@@ -184,7 +194,7 @@ def shipment_has_type(pratka: str, day: dt.date, vidobr: str) -> bool:
 def _next_rbr(cur, pratka, day) -> str:
     """Last rbr of the shipment + 1, zero-padded to 6 (the old app used the last row ordered by rbr)."""
     cur.execute("select max(rbr) from promet where pratka=? and datkniz=?", (pratka, day))
-    last = (cur.fetchone()[0] or "").strip()
+    last = (_first(cur)[0] or "").strip()
     return f"{int(last) + 1 if last.isdigit() else 1:06d}"
 
 
@@ -220,16 +230,53 @@ def insert_order(values: dict) -> str:
         con.close()
 
 
-def _find_db_key(cur, order):
+def copy_shipment(src_pratka, src_day, dst_pratka, dst_day, today=None) -> int:
+    """КОПИРАЊЕ: copy every order of a booked shipment into the current one (one transaction).
+
+    As the old program: all columns copied unchanged except pratka/datkniz/valdat (the current shipment),
+    datpod = today and brkniz cleared; datdos/dosdat were not copied. Unlike the old program the copies are
+    numbered after the current shipment's last order (it copied rbr, creating duplicates). Returns the count.
+    """
+    today = today or dt.date.today()
+    con = connect()
+    try:
+        cur = con.cursor()
+        cur.execute("select * from promet where (pratka=?) and (datkniz=?) order by rbr", (src_pratka, src_day))
+        source = _rows(cur)
+        next_number = int(_next_rbr(cur, dst_pratka, dst_day))
+        cols = [c for c in PROMET_COLUMNS if c not in ("datdos", "dosdat")]
+        sql = f"insert into promet ({','.join(cols)}) values ({','.join('?' * len(cols))})"
+        for offset, row in enumerate(source):
+            values = dict(row)
+            values.update(pratka=dst_pratka, datkniz=dst_day, valdat=dst_day, datpod=today, brkniz="",
+                          rbr=f"{next_number + offset:06d}")
+            cur.execute(sql, [values.get(c) for c in cols])
+        con.commit()
+        return len(source)
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
+
+
+def _one_row(order):
+    """SQL condition + parameters picking exactly one promet row equal to the order (all stored columns).
+
+    Done inside the changing statement itself: a separate SELECT before the UPDATE/DELETE on the same
+    connection let firebirdsql receive a late fetch answer ("op_code = 66") and fail intermittently.
+    """
     raw = order["_raw"]
     stored = [c for c in PROMET_COLUMNS if c in raw]
-    where = " and ".join(f"({c} is null)" if raw[c] is None else f"({c}=?)" for c in stored)
+    where = " and ".join(f"(q.{c} is null)" if raw[c] is None else f"(q.{c}=?)" for c in stored)
     params = [raw[c] for c in stored if raw[c] is not None]
-    cur.execute(f"select first 1 rdb$db_key from promet where {where}", params)
-    found = cur.fetchone()
-    if not found:
+    # The changing statement aliases promet as p; the lookup uses q (same table twice).
+    return f"p.rdb$db_key = (select first 1 q.rdb$db_key from promet q where {where})", params
+
+
+def _changed_one(cur):
+    if cur.rowcount != 1:
         raise LookupError("Налогот веќе не постои во базата.")
-    return found[0]
 
 
 def update_order(order, changes: dict) -> None:
@@ -237,12 +284,12 @@ def update_order(order, changes: dict) -> None:
     con = connect()
     try:
         cur = con.cursor()
-        key = _find_db_key(cur, order)
         changes = _encode_values(changes)
         cols = list(changes)
-        cur.execute(
-            f"update promet set {','.join(c + '=?' for c in cols)} where rdb$db_key=?", [changes[c] for c in cols] + [key]
-        )
+        where, params = _one_row(order)
+        cur.execute(f"update promet p set {','.join(c + '=?' for c in cols)} where {where}",
+                    [changes[c] for c in cols] + params)
+        _changed_one(cur)
         con.commit()
     except Exception:
         con.rollback()
@@ -256,7 +303,9 @@ def delete_order(order) -> None:
     con = connect()
     try:
         cur = con.cursor()
-        cur.execute("delete from promet where rdb$db_key=?", (_find_db_key(cur, order),))
+        where, params = _one_row(order)
+        cur.execute(f"delete from promet p where {where}", params)
+        _changed_one(cur)
         con.commit()
     except Exception:
         con.rollback()

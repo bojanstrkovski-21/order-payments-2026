@@ -59,6 +59,33 @@ class BookingDialog(wx.Dialog):
         return ui.picker_date(self.podnes), ui.picker_date(self.valuta), self.plata.GetSelection() == 1
 
 
+class CopyDialog(wx.Dialog):
+    """КОПИРАЊЕ: which earlier (booked) shipment to copy into the current one."""
+
+    def __init__(self, parent):
+        super().__init__(parent, title="Копирање")
+        text = wx.StaticText(self, label="Со оваа акција се врши копирање на налозите\nод пратката која ќе ја наведете!")
+        form = wx.FlexGridSizer(cols=2, vgap=8, hgap=10)
+        self.pratka = wx.TextCtrl(self, size=(40, -1))
+        self.pratka.SetMaxLength(1)
+        self.day = ui.date_picker(self)
+        form.Add(wx.StaticText(self, label="Пратка бр.:"), 0, wx.ALIGN_CENTER_VERTICAL)
+        form.Add(self.pratka)
+        form.Add(wx.StaticText(self, label="Датум на валута:"), 0, wx.ALIGN_CENTER_VERTICAL)
+        form.Add(self.day)
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        sizer.Add(text, 0, wx.ALL, 12)
+        sizer.Add(form, 0, wx.LEFT | wx.RIGHT, 12)
+        sizer.Add(self.CreateStdDialogButtonSizer(wx.OK | wx.CANCEL), 0, wx.EXPAND | wx.ALL, 12)
+        self.FindWindowById(wx.ID_OK).SetLabel("Копирај")
+        self.FindWindowById(wx.ID_CANCEL).SetLabel("Откажи")
+        self.SetSizerAndFit(sizer)
+        self.pratka.SetFocus()
+
+    def values(self):
+        return macc.encode(self.pratka.GetValue().strip().upper()), ui.picker_date(self.day)
+
+
 class ShipmentPanel(wx.Panel):
     """Header (account, shipment, value date) → list of orders with actions."""
 
@@ -281,6 +308,46 @@ class ShipmentPanel(wx.Panel):
             dlg.Destroy()
         if saved:
             self.reload(keep_row=row)
+
+    def copy_refusal(self, src_pratka, src_day):
+        """Why the source shipment cannot be copied into this one, or None."""
+        if not src_pratka:
+            return "ВНЕСЕТЕ БРОЈ НА ПРАТКА!"
+        booking = db.get_booking(src_pratka, src_day)
+        if booking is None:
+            return "НЕ ПОСТОИ ТАКВА ПРАТКА!"
+        if booking["sifsmet"] != self.account["sifra"]:
+            return "ОВАА ПРАТКА Е ОД ДРУГА СМЕТКА"
+        if (src_pratka, src_day) == self.shipment:
+            return "ОВА Е ИСТАТА ПРАТКА"
+        source_types = {o["vidobr"] for o in db.shipment_orders(src_pratka, src_day)}
+        if not source_types:
+            return "НЕМА НАЛОЗИ ЗА КОПИРАЊЕ"
+        present = {o["vidobr"] for o in self.orders}
+        for vidobr in source_types:
+            refusal = orders.mixing_error(vidobr, present | (source_types - {vidobr}))
+            if refusal:
+                return refusal
+        return None
+
+    def copy_from(self):
+        if not self.is_open or self.is_booked:
+            return
+        dlg = CopyDialog(self)
+        try:
+            if dlg.ShowModal() != wx.ID_OK:
+                return
+            src_pratka, src_day = dlg.values()
+        finally:
+            dlg.Destroy()
+        refusal = self.copy_refusal(src_pratka, src_day)
+        if refusal:
+            ui.info(self, refusal)
+            return
+        pratka, day = self.shipment
+        copied = db.copy_shipment(src_pratka, src_day, pratka, day)
+        self.reload(keep_row=len(self.orders))
+        ui.info(self, f"ИСКОПИРАНИ СЕ {copied} НАЛОЗИ")
 
     def delete_selected(self):
         order = self.selected_order()
