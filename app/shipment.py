@@ -8,6 +8,7 @@ import wx.grid
 import db
 import macc
 import orders
+import registers
 import reports
 import tdb
 import ui
@@ -86,6 +87,13 @@ class CopyDialog(wx.Dialog):
 
     def values(self):
         return macc.encode(self.pratka.GetValue().strip().upper()), ui.picker_date(self.day)
+
+
+def account_label(account):
+    if not account:
+        return ""
+    name = (account.get("naziv") or "").strip()
+    return account["smetbukor"].strip() + (f"  —  {name}" if name else "")
 
 
 class ShipmentPanel(wx.Panel):
@@ -190,18 +198,37 @@ class ShipmentPanel(wx.Panel):
     # ----- header ----------------------------------------------------------
     def on_account_left(self, event):
         event.Skip()
+        self.refresh_account()
+
+    def pick_account(self):
+        """Empty account code: choose from СМЕТКИ (as the old program opened its accounts register)."""
+        dlg = registers.AccountsDialog(self, pick=True)
+        try:
+            account = dlg.selected() if dlg.ShowModal() == wx.ID_OK else None
+        finally:
+            dlg.Destroy()
+        if account:
+            self.f_sifsmet.SetValue(account["sifra"])
+            self.refresh_account()
+        return account is not None
+
+    def refresh_account(self):
+        """Account label: the budget account and its name (new); after the register changed it too."""
         code = self.f_sifsmet.GetValue().strip()
         self.account = db.get_account(code) if code else None
-        self.l_account.SetLabel(self.account["smetbukor"] if self.account else "")
+        self.l_account.SetLabel(account_label(self.account))
+        self.Layout()
 
     def open_shipment(self):
+        if not self.f_sifsmet.GetValue().strip() and not self.pick_account():
+            return
         code = self.f_sifsmet.GetValue().strip()
         self.account = db.get_account(code) if code else None
         if not self.account:
             ui.info(self, "НЕПОСТОЕЧКА ШИФРА НА СМЕТКА")
             self.f_sifsmet.SetFocus()
             return
-        self.l_account.SetLabel(self.account["smetbukor"])
+        self.l_account.SetLabel(account_label(self.account))
         pratka = macc.encode(self.f_pratka.GetValue().strip().upper())
         if not pratka:
             ui.info(self, "ВНЕСЕТЕ БРОЈ НА ПРАТКА")

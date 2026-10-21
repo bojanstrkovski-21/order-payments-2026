@@ -85,7 +85,7 @@ def get_account(sifra: str):
         cur = con.cursor()
         cur.execute("select * from smetki where sifra=?", (sifra,))
         rows = _rows(cur)
-        return {k: _clean(v) for k, v in rows[0].items()} if rows else None
+        return _decoded(rows[0], SMETKI_TEXT) if rows else None
     finally:
         con.close()
 
@@ -119,14 +119,140 @@ def _decoded(row, text_keys):
     return out
 
 
+# Columns the old program did not have, added to the NEW app's database only (user decisions, CLAUDE.md).
+NEW_COLUMNS = {
+    "INIT": [("EMBS", "VARCHAR(10)"), ("EMAIL1", "VARCHAR(100)"), ("EMAIL2", "VARCHAR(100)"), ("EMAIL_FIN", "VARCHAR(100)")],
+    "SMETKI": [("NAZIV", "VARCHAR(60)")],
+}
+LIVE_DATABASE = Path(r"D:\nalozi\NOVNAL.FDB")
+INIT_TEXT = ("naziv", "adresa", "mesto", "trzkan")
+SMETKI_TEXT = ("naziv",)
+
+
+def _database_path():
+    cfg = configparser.ConfigParser()
+    cfg.read(SETTINGS, encoding="utf-8")
+    return Path(cfg["database"]["path"])
+
+
+def ensure_schema():
+    """Add the new columns if missing. Never touches the old program's live database."""
+    if str(_database_path()).lower() == str(LIVE_DATABASE).lower():
+        raise RuntimeError("Новата програма не смее да ја менува базата на старата програма (D:\\nalozi).")
+    con = connect()
+    try:
+        cur = con.cursor()
+        added = []
+        for table, columns in NEW_COLUMNS.items():
+            cur.execute("select trim(rdb$field_name) from rdb$relation_fields where rdb$relation_name=?", (table,))
+            existing = {r[0].strip() for r in cur.fetchall()}
+            for name, sql_type in columns:
+                if name not in existing:
+                    cur.execute(f"alter table {table} add {name} {sql_type}")
+                    added.append(f"{table}.{name}")
+        con.commit()
+        return added
+    finally:
+        con.close()
+
+
 def get_init():
-    """Company settings (single row): naziv, mesto, trezsmet, trzkan, ..."""
+    """Institution (single row): naziv, adresa, mesto, telefon, edb, trezsmet, trzkan, trzkodkor, trzinskod
+    and — in the new database — embs, email1, email2, email_fin."""
     con = connect()
     try:
         cur = con.cursor()
         cur.execute("select * from init")
         rows = _rows(cur)
-        return _decoded(rows[0], ("naziv", "adresa", "mesto", "trzkan")) if rows else {}
+        return _decoded(rows[0], INIT_TEXT) if rows else {}
+    finally:
+        con.close()
+
+
+def save_init(values: dict) -> None:
+    """ГЕНЕРАЛИИ — ПАМТИ: update the single institution row, or insert it when there is none."""
+    values = {k: macc.encode(v) if k in INIT_TEXT and isinstance(v, str) else v for k, v in values.items()}
+    cols = list(values)
+    con = connect()
+    try:
+        cur = con.cursor()
+        cur.execute("select count(*) from init")
+        if _first(cur)[0]:
+            cur.execute(f"update init p set {','.join(c + '=?' for c in cols)} "
+                        "where p.rdb$db_key = (select first 1 q.rdb$db_key from init q)", [values[c] for c in cols])
+        else:
+            cur.execute(f"insert into init ({','.join(cols)}) values ({','.join('?' * len(cols))})",
+                        [values[c] for c in cols])
+        con.commit()
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
+
+
+def list_accounts():
+    """СМЕТКИ ordered by code: sifra, smetbukor, podsbukor, naziv (new)."""
+    con = connect()
+    try:
+        cur = con.cursor()
+        cur.execute("select * from smetki order by sifra")
+        return [_decoded(r, SMETKI_TEXT) for r in _rows(cur)]
+    finally:
+        con.close()
+
+
+def save_account(values: dict, old_code=None) -> None:
+    """Insert a new account (old_code None) or update the account with code old_code. A code must be unique."""
+    values = {k: macc.encode(v) if k in SMETKI_TEXT and isinstance(v, str) else v for k, v in values.items()}
+    cols = list(values)
+    con = connect()
+    try:
+        cur = con.cursor()
+        cur.execute("select count(*) from smetki where sifra=?", (values["sifra"],))
+        taken = _first(cur)[0]
+        if taken and values["sifra"] != old_code:
+            raise ValueError("ДУПЛИРАН ЗАПИС !")
+        if old_code is not None and values["sifra"] != old_code:
+            cur.execute("select (select count(*) from promet where sifsmet=?) + (select count(*) from kniz where sifsmet=?) "
+                        "from rdb$database", (old_code, old_code))
+            if _first(cur)[0]:
+                raise ValueError("ШИФРАТА НЕ МОЖЕ ДА СЕ ПРОМЕНИ — СМЕТКАТА СЕ КОРИСТИ ВО НАЛОЗИ")
+        if old_code is None:
+            cur.execute(f"insert into smetki ({','.join(cols)}) values ({','.join('?' * len(cols))})",
+                        [values[c] for c in cols])
+        else:
+            cur.execute(f"update smetki set {','.join(c + '=?' for c in cols)} where sifra=?",
+                        [values[c] for c in cols] + [old_code])
+        con.commit()
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
+
+
+def account_in_use(sifra: str) -> int:
+    """How many orders and bookings use the account (deleting it would orphan them)."""
+    con = connect()
+    try:
+        cur = con.cursor()
+        cur.execute("select (select count(*) from promet where sifsmet=?) + (select count(*) from kniz where sifsmet=?) "
+                    "from rdb$database", (sifra, sifra))
+        return _first(cur)[0]
+    finally:
+        con.close()
+
+
+def delete_account(sifra: str) -> None:
+    con = connect()
+    try:
+        cur = con.cursor()
+        cur.execute("delete from smetki where sifra=?", (sifra,))
+        con.commit()
+    except Exception:
+        con.rollback()
+        raise
     finally:
         con.close()
 

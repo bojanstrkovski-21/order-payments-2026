@@ -10,7 +10,9 @@ import wx
 import wx.adv
 import wx.ribbon as RB
 
+import db
 import orders
+import registers
 import shipment
 import ui
 
@@ -64,8 +66,12 @@ class MainFrame(wx.Frame):
         self._button(bar, "save", "Сними", art(wx.ART_FILE_SAVE))
         self._button(bar, "new", "Нова пратка", art(wx.ART_GO_BACK))
 
-        for title in ("Прегледи", "Шифрарник", "Разно"):
-            RB.RibbonPage(ribbon, wx.ID_ANY, title)
+        RB.RibbonPage(ribbon, wx.ID_ANY, "Прегледи")
+        page = RB.RibbonPage(ribbon, wx.ID_ANY, "Шифрарник")
+        bar = RB.RibbonButtonBar(RB.RibbonPanel(page, wx.ID_ANY, "Институција"))
+        self._button(bar, "general", "Генералии", art(wx.ART_HELP_SETTINGS))
+        self._button(bar, "accounts", "Сметки", art(wx.ART_REPORT_VIEW))
+        RB.RibbonPage(ribbon, wx.ID_ANY, "Разно")
 
         ribbon.Realize()
         ribbon.Bind(RB.EVT_RIBBONBUTTONBAR_CLICKED, self.on_ribbon)
@@ -108,6 +114,13 @@ class MainFrame(wx.Frame):
             self.screen.book()
         elif key == "new":
             self.screen.reset()
+        elif key in ("general", "accounts"):
+            dlg = registers.GeneralDialog(self) if key == "general" else registers.AccountsDialog(self)
+            try:
+                dlg.ShowModal()
+            finally:
+                dlg.Destroy()
+            self.screen.refresh_account()
 
 
 def save_screenshot(frame, path):
@@ -122,6 +135,7 @@ def save_screenshot(frame, path):
 
 if __name__ == "__main__":
     app = wx.App()
+    db.ensure_schema()  # adds the new register columns (never to the old program's database)
     frame = MainFrame()
     frame.Show()
     frame.Raise()

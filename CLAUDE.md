@@ -8,7 +8,7 @@ in `extracted/*_spec.md`. The repository is **public** — never commit personal
 
 - **Python 3.14 + wxPython 4.3** (Office 2010 style `wx.ribbon`), Firebird via the pure-Python `firebirdsql` driver.
   Virtual environment: `demo/.venv` (wxPython, firebirdsql, passlib, pefile, capstone, fonttools, pillow).
-- `app/` — the new program: `main.py` (window + ribbon), `shipment.py` (ВНЕСУВАЊЕ НА НАЛОЗИ), `reports.py` (print-outs), `tdb.py` (USB file), `orders.py` (all order
+- `app/` — the new program: `main.py` (window + ribbon), `shipment.py` (ВНЕСУВАЊЕ НА НАЛОЗИ), `reports.py` (print-outs), `tdb.py` (USB file), `registers.py` (Шифрарник), `orders.py` (all order
   forms), `db.py` (all database access), `macc.py` (MAC C ↔ Cyrillic), `workdays.py` + `holidays.txt`, `ui.py`.
 - `tools/` — reverse-engineering helpers and the tests (`test_*.py`).
 - `extracted/` — recovered specifications (`vnnal_spec.md`, `nalXX_spec.md`), schema, SQL lists, handler map.
@@ -50,7 +50,9 @@ Settings: copy `app/settings.example.ini` to `app/settings.ini` and fill in the 
 - **Every print-out** (shipment print-outs, register lists, reports): **Печати** through the Windows dialog (any
   installed printer, incl. Microsoft Print to PDF / Adobe PDF) **and** the program's own **„Сними како PDF"**
   (`reports.Report` → `to_html` / `to_pdf`, fpdf2 with Segoe UI; reports also Excel where planned).
-- **Registers — new fields the old program lacked** (only in the new app's database; build with the registers):
+- **Registers — new fields the old program lacked** (only in the new app's database; `db.ensure_schema()` adds them
+  at startup and refuses to run against `D:
+alozi`):
   - Institution (`INIT`, screen ГЕНЕРАЛИИ): add **ЕМБС** and **e-mail addresses — two general school addresses and
     one for the finance and accounting department**. Today `INIT` has naziv, adresa, mesto, telefon (9 chars), edb,
     trezsmet, trzkan, trzkodkor, trzinskod.
@@ -63,7 +65,8 @@ Settings: copy `app/settings.example.ini` to `app/settings.ini` and fill in the 
 
 - **Run the tests right after every change**, on a fresh throwaway copy of the database, before reporting done:
   restore `work/db/novnal_for_nalozi26.fbk` with `gbak -c` to a scratch `TEST.FDB`, point a `test_settings.ini` at it,
-  run every `tools/test_*.py <test_settings.ini>`. Report failures honestly.
+  run every `tools/test_*.py <test_settings.ini>` with `python -I -X utf8` (`-I` ignores `PYTHONIOENCODING`; without
+  `-X utf8` Cyrillic output to a log file fails). Report failures honestly.
 - Reverse engineering: `tools/delphi_methods.py` (event handlers + field offsets from the Delphi VMTs),
   `tools/delphi_listing.py` (Capstone listing with field names and strings — Ghidra misses many Delphi handlers and
   REA cannot create functions on Windows), `tools/param_map.py` (which value goes into which SQL parameter).
@@ -89,7 +92,32 @@ Settings: copy `app/settings.example.ini` to `app/settings.ini` and fill in the 
 Done and tested: main window, shipment screen (open, delete, booking, **копирање**, **печатење**, **сними**), **all 7 order forms** (60, 61, 62,
 70, 73, 76, 80), working-day defaults.
 The shipment screen is complete (every old button rebuilt).
-Next: the registers (Шифрарник: генералии, сметки, конта, оператори, жиро-сметки/партнери, вработени), the report
+Шифрарник: **ГЕНЕРАЛИИ** (old fields + ЕМБС + 3 e-mails) and **СМЕТКИ** (name per account; add, edit, delete only when
+unused, code change refused when used, search, Печати / PDF) done and tested (`tools/test_registers.py`). The account
+name is shown next to the account on the shipment screen and on the print-outs; an empty account code opens СМЕТКИ to
+choose from (as the old program did).
+**КОНТА phase — decided 2026-10-21, data prepared, screens NOT built yet** (`extracted/ministry/` holds the public
+ministry PDFs and the seed files; `tools/import_konta.py` builds `konta_seed.csv`):
+- Old program facts (checked in the old forms/asm): `KONTA` = `KONTO CHAR(6)` + `OPIS CHAR(30)`; forms `TTRZKON` = КОНТА
+  register, `TTRZSM` = СМЕТКИ register (no payment-account list existed). No order form validates or looks up a konto;
+  KONTA is read only by the specification (`SPECIF`, description cut at 30). Цел на дознака = 2 × 35 (`celdoz1/2`) on all
+  order types; the old Налог 73 form set no MaxLength on it, so a long text crashed the old program — new forms cap at 35.
+- **Opis**: the new КОНТА keeps the **full official name** (`opis_full`, searchable when choosing a konto on an order) and
+  the **30-character short form** (word boundary) for the old specification column / цел на дознака. 700 of 985 names are cut.
+  `konta_seed.csv` = konto;opis30;opis_full;klasa — 393 rashodi (parsed from the Правилник text layer, MAC C → `macc.decode`)
+  and 592 prihodi (the Службен весник PDF is scanned: hand-transcribed in `prihodi_transcribed.txt`; cross-check every
+  konto against the payment-account table before loading).
+- **УПЛАТНИ СМЕТКИ** (new register, pages 22–33 of the prihodi PDF; seed file still to be transcribed): official code
+  `840-01013`, name, linked prihoden konto. Stored on orders in `podsmetprim` as ONE 11-digit number without separators =
+  bank (840/843) + **3-digit municipality code** + 5-digit official code (`840-01258` → `84010301258`), so the treasury
+  recognises it. Used on **Налог 61 and 70 only**; on 73 and 76 the account is a free 15-character entry (institution
+  accounts such as `703…`, `660…`, `160…`). The field always stays free text (max 15); the list is a shortcut, a hand-typed
+  account is saved as typed (at most a soft warning). Приходна шифра (`konprim`) stays free too and can be picked from КОНТА.
+- **ОПШТИНИ** (new register, seed `extracted/ministry/opstini.csv`, 81 municipalities): the middle code is a drop-down from
+  it; default `103` = Битола, editable in ГЕНЕРАЛИИ (new field) and per order.
+- New accounts next year are added by hand in the КОНТА screen (no „import from new Службен весник" feature).
+- Build order: КОНТА screen (like СМЕТКИ) → ОПШТИНИ → УПЛАТНИ СМЕТКИ → order-form changes (61, 70, 73, 76).
+Next: the other registers (конта, оператори, жиро-сметки/партнери, вработени), the report
 „Преглед на пратки по датум", login/operators, „Превземање на налози", the move to SQLite, and finally a custom theme.
 
 Planned new feature (user, 2026-10-21 — build **after the registers**; the old program had nothing like it):

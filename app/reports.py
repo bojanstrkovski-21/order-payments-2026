@@ -49,6 +49,8 @@ def _shipment_report(ctx, title, with_accounts=True, landscape=False):
         details = [("ТРЕЗОРСКИ КОД НА КОРИСНИК:", init.get("trzkodkor") or ""),
                    ("ТРЕЗОРСКА СМЕТКА:", init.get("trezsmet") or ""),
                    ("ПОДСМЕТКА НА КОРИСНИК:", account.get("smetbukor") or "")]
+        if (account.get("naziv") or "").strip():
+            details.append(("СМЕТКА:", f"{account['sifra']} — {account['naziv'].strip()}"))
     return Report(title=title, company=init.get("naziv") or "", details=details, landscape=landscape,
                   subtitle=f"на трезорски налози од пратка бр. {ctx['pratka']} за ден {ui.date_text(ctx['day'])}")
 
@@ -233,6 +235,20 @@ def preview(parent, report: Report, copies=1):
     printer.SetFooter('<p align="right"><font size="-1">Страна @PAGENUM@ / @PAGESCNT@</font></p>')
     printer.PreviewText(to_html(report))
     return printer
+
+
+def print_or_pdf(parent, report: Report, default_name: str):
+    """For list print-outs: choose Печати (preview + Windows printers) or Сними како PDF."""
+    dlg = wx.MessageDialog(parent, "Печатење или PDF?", "Печатење", wx.YES_NO | wx.CANCEL | wx.ICON_QUESTION)
+    dlg.SetYesNoCancelLabels("Печати", "Сними како PDF", "Откажи")
+    try:
+        choice = dlg.ShowModal()
+    finally:
+        dlg.Destroy()
+    if choice == wx.ID_YES:
+        parent._printer = preview(parent, report)
+    elif choice == wx.ID_NO and save_pdf(parent, report, default_name):
+        ui.info(parent, "PDF ДОКУМЕНТОТ Е СНИМЕН")
 
 
 def save_pdf(parent, report: Report, default_name: str) -> bool:
