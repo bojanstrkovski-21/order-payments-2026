@@ -47,6 +47,15 @@ Settings: copy `app/settings.example.ini` to `app/settings.ini` and fill in the 
 - **Налог 73** is filed under its shipment like every other type (old program swapped valdat/datkniz).
 - Delete/edit change exactly one row (the old delete could remove several identical orders).
 - **Копирање**: copies get no Датум на доспевање (as the old program) — the user sets the dates on each copy.
+- **Every print-out** (shipment print-outs, register lists, reports): **Печати** through the Windows dialog (any
+  installed printer, incl. Microsoft Print to PDF / Adobe PDF) **and** the program's own **„Сними како PDF"**
+  (`reports.Report` → `to_html` / `to_pdf`, fpdf2 with Segoe UI; reports also Excel where planned).
+- **Registers — new fields the old program lacked** (only in the new app's database; build with the registers):
+  - Institution (`INIT`, screen ГЕНЕРАЛИИ): add **ЕМБС** and **e-mail addresses — two general school addresses and
+    one for the finance and accounting department**. Today `INIT` has naziv, adresa, mesto, telefon (9 chars), edb,
+    trezsmet, trzkan, trzkodkor, trzinskod.
+  - Accounts (`SMETKI`, screen СМЕТКИ): add a **name/description per account** so the user knows which is which;
+    show it next to the code wherever an account is chosen or printed.
 - The **USB payment file** („Сними", `tdb.py`) stays in the old MAC C encoding and is byte-identical to the old
   program's files (`extracted/tdb_spec.md`; check with `tools/compare_tdb.py` against real files kept outside the repo).
 
@@ -82,6 +91,13 @@ Done and tested: main window, shipment screen (open, delete, booking, **копи
 The shipment screen is complete (every old button rebuilt).
 Next: the registers (Шифрарник: генералии, сметки, конта, оператори, жиро-сметки/партнери, вработени), the report
 „Преглед на пратки по датум", login/operators, „Превземање на налози", the move to SQLite, and finally a custom theme.
+
+Planned new feature (user, 2026-10-21 — build **after the registers**; the old program had nothing like it):
+„**Плаќања по примач**" under Прегледи — (1) one recipient (partner/employee from the register, or name/account search
+for Налог 73 which has no code), all payments in a period, with total; (2) all recipients with order count and
+total for a period. Output: **export to Excel (.xlsx)**, **export to PDF** (written by the program itself, no printer
+needed) and **print** through the Windows print dialog (any installed printer, incl. Microsoft Print to PDF / Adobe PDF).
+Period filter: the user chooses Датум на валута / на поднесување / на доспевање in the report.
 
 ## Keeping this file current
 

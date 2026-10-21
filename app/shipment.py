@@ -320,12 +320,20 @@ class ShipmentPanel(wx.Panel):
             return
         dlg = reports.PrintDialog(self, reports.is_salary_only(self.orders))
         try:
-            if dlg.ShowModal() != wx.ID_OK:
-                return
+            action = dlg.ShowModal()
             kind, copies = dlg.values()
         finally:
             dlg.Destroy()
-        self._printer = reports.preview(self, self._context(), self.orders, kind, copies)
+        if action == wx.ID_CANCEL:
+            return
+        report = reports.shipment_report(self._context(), self.orders, kind)
+        if action == reports.ID_PDF:
+            pratka, day = self.shipment
+            title = {"list": "Список", "specification": "Спецификација"}.get(kind, "Спецификација")
+            if reports.save_pdf(self, report, f"{title} пратка {pratka} {day:%d.%m.%Y}.pdf"):
+                ui.info(self, "PDF ДОКУМЕНТОТ Е СНИМЕН")
+            return
+        self._printer = reports.preview(self, report, copies)
 
     def save_file(self):
         """СНИМИ — write the treasury file (*.TDB, MAC C, byte-identical to the old program). Booked shipments only."""

@@ -26,7 +26,7 @@ orders = db.shipment_orders(s[0], s[1].date())
 
 app = wx.App()
 frame = wx.Frame(None)
-printer = reports.preview(frame, ctx, orders, kind, 1)
+printer = reports.preview(frame, reports.shipment_report(ctx, orders, kind), 1)
 
 
 def shoot():

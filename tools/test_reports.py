@@ -51,7 +51,7 @@ html, landscape = reports.build(ctx, orders, "orders")
 check(f"orders: one row per order ({len(orders)})", body_rows(html) == len(orders))
 check("orders: total equals the shipment total", ui.money(sum(o["iznos"] for o in orders)) in html)
 check("orders: header with company, shipment number and date, treasury code/account, sub-account",
-      all(x in html for x in (init["naziv"], f'пратка бр. <b>{ctx["pratka"]}</b>', ui.date_text(ctx["day"]),
+      all(x in html for x in (init["naziv"], f'пратка бр. {ctx["pratka"]}', ui.date_text(ctx["day"]),
                               init["trzkodkor"], init["trezsmet"], ctx["account"]["smetbukor"])))
 check("orders: portrait, signature line", not landscape and "О д о б р и л" in html)
 
@@ -87,5 +87,44 @@ if row:
           sum(g["broj"] for g in db.specification(orders)) == len(orders))
 else:
     con.close()
+
+# 4. PDF export: open the written PDFs and check what they contain.
+import tempfile  # noqa: E402
+
+import pymupdf  # noqa: E402  (only used by this test to read the PDFs back)
+
+with tempfile.TemporaryDirectory() as tmp:
+    ctx, orders = context(ordinary), db.shipment_orders(ordinary[0], ordinary[1].date())
+    path = Path(tmp) / "spec.pdf"
+    reports.to_pdf(reports.shipment_report(ctx, orders, "orders"), path)
+    doc = pymupdf.open(path)
+    text = "".join(page.get_text() for page in doc)
+    check("PDF: specification portrait, title, subtitle and company in Cyrillic",
+          doc[0].rect.width < doc[0].rect.height and "С П Е Ц И Ф И К А Ц И Ј А" in text
+          and f"пратка бр. {ctx['pratka']}" in text and init["naziv"] in text)
+    check("PDF: every order amount and the total are in the text",
+          all(ui.money(o["iznos"]) in text for o in orders) and ui.money(sum(o["iznos"] for o in orders)) in text)
+    check("PDF: fonts embedded (opens the same on any PC)", all(f[1] != "n/a" for f in doc.get_page_fonts(0)))
+    doc.close()
+
+    ctx, orders = context(salary), db.shipment_orders(salary[0], salary[1].date())
+    path = Path(tmp) / "list.pdf"
+    reports.to_pdf(reports.shipment_report(ctx, orders, "list"), path)
+    doc = pymupdf.open(path)
+    text = "".join(page.get_text() for page in doc)
+    check("PDF: list is landscape with the employees' names",
+          doc[0].rect.width > doc[0].rect.height and all(o["nazprim1"] in text for o in orders[:5]))
+    doc.close()
+
+    big = next(s for s in shipments if s[4] == s[3] and s[3] >= 80)
+    ctx, orders = context(big), db.shipment_orders(big[0], big[1].date())
+    path = Path(tmp) / "big.pdf"
+    reports.to_pdf(reports.shipment_report(ctx, orders, "list"), path)
+    doc = pymupdf.open(path)
+    pages = [page.get_text() for page in doc]
+    check(f"PDF: {len(orders)} employees run over {len(pages)} pages with the column headings repeated and page numbers",
+          len(pages) > 1 and all("Име и презиме" in p for p in pages) and f"Страна {len(pages)} / {len(pages)}" in pages[-1])
+    check("PDF: total on the last page equals the shipment total", ui.money(sum(o["iznos"] for o in orders)) in pages[-1])
+    doc.close()
 
 print("all checks passed")
