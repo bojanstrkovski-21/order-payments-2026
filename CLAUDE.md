@@ -29,7 +29,8 @@ Settings: copy `app/settings.example.ini` to `app/settings.ini` and fill in the 
 - **firebirdsql pitfall:** a `SELECT` followed by an `UPDATE`/`DELETE` on the same connection can fail intermittently
   (`op_code = 66`, a late fetch answer). Find the row inside the changing statement (`db._one_row`) and read results
   with `db._first` (drains the cursor), never `fetchone()`. Run the suite several times in a row after DB changes.
-- Later: possible move to SQLite (one PC) or PostgreSQL (several users) — waiting for the user's answer.
+- **First version: a one-PC database → SQLite** (user decision 2026-10-21). The move from Firebird comes after the
+  screens are rebuilt; only `db.py` changes. Text becomes real Unicode Cyrillic in SQLite; the USB file is still MAC C.
 
 ## Decisions by the user (differences from the old program)
 
@@ -45,6 +46,7 @@ Settings: copy `app/settings.example.ini` to `app/settings.ini` and fill in the 
 - **62 and 70 may share a shipment**; other types stay separated from 62 (`orders.mixing_error`).
 - **Налог 73** is filed under its shipment like every other type (old program swapped valdat/datkniz).
 - Delete/edit change exactly one row (the old delete could remove several identical orders).
+- **Копирање**: copies get no Датум на доспевање (as the old program) — the user sets the dates on each copy.
 - The **USB payment file** („Сними") must stay in the old MAC C encoding — encode with `macc.encode` on export.
 
 ## How to work
@@ -58,16 +60,18 @@ Settings: copy `app/settings.example.ini` to `app/settings.ini` and fill in the 
   Confirm findings against the real data before relying on them.
 - REA MCP + Ghidra 12.1.4 are configured in `.mcp.json` (local, read-only Windows mode). Reopen the old program
   quickly with `open_binary` path `Nalozi\NOVNAL.exe` + `snapshot_path` `work\rea\novnal_exe.snapshot` (local).
-- Git: branch `main` → https://github.com/bojanstrkovski-21/order-payments-2026 (public). Commit and push after each
-  finished piece; check that no database files, passwords or real names/accounts/EMBG are staged.
+- Git: branch `main` → https://github.com/bojanstrkovski-21/order-payments-2026 (public, MIT `LICENSE` on `main`).
+  Commit and push after each finished piece with **`.\push.ps1 "message"`** (pull, add all, commit, push to `main`).
+  It commits everything not in `.gitignore`, so check that no database files, passwords or real
+  names/accounts/EMBG are staged first.
 
 ## Progress
 
 Done and tested: main window, shipment screen (open, delete, booking, **копирање**), **all 7 order forms** (60, 61, 62,
 70, 73, 76, 80), working-day defaults.
 Next: Печатење („Список", „Спецификација"), **Сними** (USB file, byte-identical to the old program's),
-then the registers (partners, employees, accounts), reports, login/operators, Превземање на налози, the database move,
-and finally a custom theme.
+then the registers (partners, employees, accounts), reports, login/operators, Превземање на налози, the move to
+SQLite, and finally a custom theme.
 
 ## Keeping this file current
 
