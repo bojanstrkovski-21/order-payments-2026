@@ -181,6 +181,31 @@ def search_employees(text: str = ""):
             if not needle or needle in p["sifra"].lower() or needle in p["naziv"].lower() or needle in (p["embg"] or "")]
 
 
+def konta_descriptions():
+    """konta: ledger account -> description (Unicode)."""
+    con = connect()
+    try:
+        cur = con.cursor()
+        cur.execute("select konto, opis from konta")
+        return {_clean(r["konto"]): macc.decode(r["opis"]) for r in _rows(cur)}
+    finally:
+        con.close()
+
+
+def specification(orders):
+    """СПЕЦИФИКАЦИЈА of a salary shipment: totals per order type, ledger account, programme and bank (first three
+    digits of the recipient account), as the old stored procedure SPECIF — but computed from the shipment's own orders.
+    SPECIF selected by valdat = shipment date and missed orders whose value date differs (61 unbooked 62 orders)."""
+    descriptions = konta_descriptions()
+    groups = {}
+    for o in orders:
+        key = (o["vidobr"], o["konzadolz"] or "", o["progzadolz"] or "", (o["smetprim"] or "")[:3])
+        broj, vkupno = groups.get(key, (0, 0.0))
+        groups[key] = (broj + 1, vkupno + (o["iznos"] or 0))
+    return [{"vidobr": v, "cel": descriptions.get(k, ""), "konz": k, "progz": p, "banka": b, "broj": n, "vkupno": s}
+            for (v, k, p, b), (n, s) in sorted(groups.items())]
+
+
 def shipment_has_type(pratka: str, day: dt.date, vidobr: str) -> bool:
     con = connect()
     try:

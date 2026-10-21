@@ -39,9 +39,25 @@ Esc in the grid resets the screen to an empty header.
 | Ажурирање | `JvSpeedButton5Click` | Edit the selected order in its form. *Not yet analysed.* |
 | Бришење | `JVSpeedButton6Click` | Confirm „ОВОЈ ЗАПИС ЌЕ БИДЕ ИЗБРИШАН !" (ОК / Не); delete the current order; subtract its amount from the total. |
 | Книжење | `JVSpeedButton7Click` → GroupBox3 | No orders → „НЕМА НИШТО ЗА КНИЖЕЊЕ". Else ask Датум на поднесување, Датум на валута, Плата (Д/Н). |
-| Печатење | `JVSpeedButton8Click` → GroupBox1 | Вид: Spisok / Specifikacija, Br. na kopii. *Not yet analysed.* |
+| Печатење | `JVSpeedButton8Click` → GroupBox1 | Print-outs, see below. |
 | Сними | `JvSpeedButton9Click` | Save to file (SaveDialog). *Not yet analysed.* |
 | Излез | `JVSpeedButton10Click` | Close. |
+
+### Printing (`JVSpeedButton8Click`, `JvXPButton1Click`, `QuickRep1/2/3`)
+Dialog „PE^ATEWE": Br. na kopii (empty → „ВНЕСЕТЕ БРОЈ НА КОПИИ"); Вид „Spisok"/„Specifikacija" only matters for
+salary shipments. If the shipment has any order of type 60/61/70/73/76/80 → **QuickRep1** „СПЕЦИФИКАЦИЈА на трезорски
+налози од пратка бр. X за ден": header company name (`init.naziv`), page, ТРЕЗОРСКИ КОД НА КОРИСНИК (`init.trzkodkor`),
+ТРЕЗОРСКА СМЕТКА (`init.trezsmet`), ПОДСМЕТКА НА КОРИСНИК (shipment account `smetbukor`); one row per order: р.бр.,
+цел (2 lines), расх. конто, програма, назив на примач + жиро-сметка и подсметка, прих. конто (`konprim`), износ;
+„Вкупен износ" and „О д о б р и л". Otherwise (only 62): „Specifikacija" → **QuickRep2** from the stored procedure
+`specif(sifsmet, pratka, date)` (per vidobr, konto, programme, bank = first 3 digits of the recipient account: count,
+sum; cel = `konta.opis`), „Spisok" → **QuickRep3** landscape „СПИСОК": шифра, име и презиме, трансакциона сметка,
+цел, износ. The old „за ден" label never showed the date.
+
+**New app** (`reports.py`): same three print-outs as HTML in the wx print preview (Print button, page setup,
+copies, landscape for Список), with the date after „за ден" and page numbers in the footer. The salary specification
+is computed from the shipment's own orders: `SPECIF` selected by `valdat` = shipment date and missed orders whose
+value date differs (61 unbooked 62 orders in the data). Printing stays allowed for booked shipments.
 
 ### Copy (`JvSpeedButton11Click`, `brpr1Exit`, `MaskEdit2Exit`, `JvXPButton3Click`)
 Dialog „KOPIRAWE" — „SO OVAA AKCIJA SE VR[I KOPIRAWE NA PODATOCITE OD PRATKATA KOJA ]E JA NAVEDITE !":

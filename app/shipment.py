@@ -8,6 +8,7 @@ import wx.grid
 import db
 import macc
 import orders
+import reports
 import ui
 
 # (title, column, width) — same columns and order as the old grid.
@@ -308,6 +309,22 @@ class ShipmentPanel(wx.Panel):
             dlg.Destroy()
         if saved:
             self.reload(keep_row=row)
+
+    def print_shipment(self):
+        """ПЕЧАТЕЊЕ — allowed for booked shipments too (old: „дозволен е само преглед и печатење")."""
+        if not self.is_open:
+            return
+        if not self.orders:
+            ui.info(self, "НЕМА НИШТО ЗА ПЕЧАТЕЊЕ")
+            return
+        dlg = reports.PrintDialog(self, reports.is_salary_only(self.orders))
+        try:
+            if dlg.ShowModal() != wx.ID_OK:
+                return
+            kind, copies = dlg.values()
+        finally:
+            dlg.Destroy()
+        self._printer = reports.preview(self, self._context(), self.orders, kind, copies)
 
     def copy_refusal(self, src_pratka, src_day):
         """Why the source shipment cannot be copied into this one, or None."""

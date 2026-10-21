@@ -60,7 +60,7 @@ class MainFrame(wx.Frame):
         self._button(bar, "copy", "Копирање", art(wx.ART_COPY))
         bar = RB.RibbonButtonBar(RB.RibbonPanel(page, wx.ID_ANY, "Пратка"))
         self._button(bar, "book", "Книжење", art(wx.ART_TICK_MARK))
-        self._button(bar, "print", "Печатење", art(wx.ART_PRINT), "Се изработува")
+        self._button(bar, "print", "Печатење", art(wx.ART_PRINT))
         self._button(bar, "save", "Сними", art(wx.ART_FILE_SAVE), "Се изработува")
         self._button(bar, "new", "Нова пратка", art(wx.ART_GO_BACK))
 
@@ -76,7 +76,8 @@ class MainFrame(wx.Frame):
         editable = s.is_open and not s.is_booked
         selected = s.selected_order() if s.is_open else None
         state = {f"nal{c}": editable and c in orders.FORMS for c in ORDER_TYPES}
-        state.update(print=False, save=False)  # not built yet
+        state.update(save=False)  # not built yet
+        state.update(print=s.is_open and bool(s.orders))
         state.update(copy=editable)
         state.update(edit=editable and bool(selected) and selected["vidobr"] in orders.FORMS,
                      delete=editable and bool(s.orders), book=editable, new=s.is_open)
@@ -95,6 +96,8 @@ class MainFrame(wx.Frame):
             self.screen.new_order(key[3:])
         elif key == "edit":
             self.screen.edit_selected()
+        elif key == "print":
+            self.screen.print_shipment()
         elif key == "copy":
             self.screen.copy_from()
         elif key == "delete":
