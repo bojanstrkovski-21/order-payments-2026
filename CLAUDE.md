@@ -61,9 +61,18 @@ Settings: copy `app/settings.example.ini` to `app/settings.ini` and fill in the 
 - REA MCP + Ghidra 12.1.4 are configured in `.mcp.json` (local, read-only Windows mode). Reopen the old program
   quickly with `open_binary` path `Nalozi\NOVNAL.exe` + `snapshot_path` `work\rea\novnal_exe.snapshot` (local).
 - Git: branch `main` → https://github.com/bojanstrkovski-21/order-payments-2026 (public, MIT `LICENSE` on `main`).
-  Commit and push after each finished piece with **`.\push.ps1 "message"`** (pull, add all, commit, push to `main`).
-  It commits everything not in `.gitignore`, so check that no database files, passwords or real
-  names/accounts/EMBG are staged first.
+  **The user commits and pushes** with `.\push.ps1 "message"` (pull, add all, commit, push to `main`).
+  Claude does **not** commit or push; it leaves the changes in the working tree and tells the user when to push.
+  push.ps1 commits everything not in `.gitignore`, so before saying „you can push", check that no database files,
+  passwords or real names/accounts/EMBG would be committed.
+
+## Session rules (user's)
+
+- **start-session** (`/start-session`): sync with GitHub (`git pull`), check the setup, run the tests, then give a
+  short summary of where the project stands and continue.
+- **end-session** (`/end-session`): write memory (this file + Claude's private notes, kept in sync), close the
+  REA/Ghidra target with a snapshot, check nothing sensitive would be committed, then tell the user they can run
+  `.\push.ps1` with a suggested commit message.
 
 ## Progress
 
