@@ -33,7 +33,7 @@ db._database_path = real_path
 
 added = db.ensure_schema()
 check("new columns added once", set(added) <= {"INIT.EMBS", "INIT.EMAIL1", "INIT.EMAIL2", "INIT.EMAIL_FIN",
-                                               "SMETKI.NAZIV"})
+                                               "SMETKI.NAZIV", "KONTA.OPISFULL"})
 check("ensure_schema is idempotent", db.ensure_schema() == [])
 
 # --- ГЕНЕРАЛИИ ----------------------------------------------------------------------------------------------
@@ -123,6 +123,111 @@ html = reports.to_html(r)
 check("account list HTML has the name", "Главна сметка" in html)
 pdf.unlink()
 dlg.Destroy()
+
+# --- КОНТА --------------------------------------------------------------------------------------------------
+import csv  # noqa: E402
+
+import konta  # noqa: E402
+
+check("short name cuts at a word boundary", konta.short_name("Основни плати - државни службеници") == "Основни плати - државни")
+check("short name keeps a short text", konta.short_name("Пошта") == "Пошта")
+check("class of a konto", (konta.konto_class("401110"), konta.konto_class("711213")) == ("4", "7"))
+
+old_konta = {k["konto"]: k for k in db.list_konta()}
+seed_file = Path(__file__).resolve().parent.parent / "extracted" / "ministry" / "konta_seed.csv"
+with open(seed_file, encoding="utf8", newline="") as f:
+    seed = [{"konto": r["konto"], "opis": r["opis30"], "opisfull": r["opis_full"]}
+            for r in csv.DictReader(f, delimiter=";")]
+check("seed has the ministry lists", len(seed) > 900 and all(len(s["opis"]) <= 30 for s in seed))
+added, there = db.load_konta(seed)
+check("load adds only the missing konta", added == len(seed) - len(old_konta) and there == len(old_konta))
+check("second load adds nothing", db.load_konta(seed) == (0, len(seed)))
+now = {k["konto"]: k for k in db.list_konta()}
+check("every seed konto is in the register", set(now) == {s["konto"] for s in seed} | set(old_konta))
+check("existing konta untouched", all(now[c]["opis"] == old_konta[c]["opis"] and now[c]["opisfull"] == old_konta[c]["opisfull"]
+                                       for c in old_konta))
+check("konta listed in code order", list(now) == sorted(now))
+long = now["718118"]
+check("full official name kept", len(long["naziv"]) > 300 and long["naziv"].startswith("Надоместок за заштита"))
+check("short form kept at most 30", all(len(k["opis"].strip()) <= 30 for k in now.values()))
+check("Cyrillic round-trips", now["711213"]["naziv"].startswith("Данок на добивка по годишен даночен биланс"))
+check("old konto without a full name shows its short name",
+      all(now[c]["naziv"] == old_konta[c]["opis"].strip() for c in old_konta if not old_konta[c]["opisfull"].strip()))
+
+free_konto = next(f"{n}" for n in range(999999, 999000, -1) if str(n) not in now)
+db.save_konto({"konto": free_konto, "opis": "Тест конто џепарац", "opisfull": "Тест конто џепарац со долг целосен назив"})
+k = db.get_konto(free_konto)
+check("new konto with Cyrillic names", k and k["opis"].strip() == "Тест конто џепарац" and k["naziv"].endswith("назив"))
+for bad, why in ((dict(konto=free_konto, opis="x", opisfull="x"), "duplicate"),
+                 (dict(konto="999990", opis="а" * 31, opisfull="а"), "short name over 30"),
+                 (dict(konto="999990", opis="COVID", opisfull="COVID"), "Latin letters"),
+                 (dict(konto="999990", opis="а", opisfull="а" * 401), "full name over 400"),
+                 (dict(konto="999990", opis="ö", opisfull="ö"), "character the old encoding cannot hold")):
+    try:
+        db.save_konto(bad)
+        check(f"refused: {why}", False)
+    except ValueError:
+        check(f"refused: {why}", True)
+db.save_konto({"konto": free_konto, "opis": "Преименувано", "opisfull": "Преименувано конто"}, old_code=free_konto)
+check("konto renamed", db.get_konto(free_konto)["naziv"] == "Преименувано конто")
+db.save_konto({"konto": "999990", "opis": "Преименувано", "opisfull": "Преименувано конто"}, old_code=free_konto)
+check("unused konto code changed", db.get_konto("999990") and db.get_konto(free_konto) is None)
+free_konto = "999990"
+
+con = db.connect()
+cur = con.cursor()
+cur.execute("select first 1 konzadolz from promet where konzadolz is not null and trim(konzadolz)<>''")
+used_konto = db._clean(db._first(cur)[0])
+con.close()
+if used_konto not in now:
+    db.save_konto({"konto": used_konto, "opis": "Користено", "opisfull": "Користено конто"})
+check("used konto counted", db.konto_in_use(used_konto) > 0 and db.konto_in_use(free_konto) == 0)
+try:
+    db.save_konto({"konto": free_konto, "opis": "а", "opisfull": "а"}, old_code=used_konto)
+    check("code change of a used konto refused", False)
+except ValueError:
+    check("code change of a used konto refused", True)
+check("used konto untouched", db.get_konto(used_konto) is not None)
+db.delete_konto(free_konto)
+check("konto deleted", db.get_konto(free_konto) is None)
+check("specification descriptions still short", all(len(v) <= 30 for v in db.konta_descriptions().values()))
+
+dlg = registers.KontaDialog(frame)
+check("register lists every konto", dlg.list.GetItemCount() == len(db.list_konta()))
+dlg.kind.SetSelection(1)
+dlg.fill()
+check("class 4 filter", dlg.list.GetItemCount() > 300 and all(k["konto"].startswith("4") for k in dlg.shown))
+dlg.kind.SetSelection(2)
+dlg.fill()
+check("class 7 filter", dlg.list.GetItemCount() > 500 and all(k["konto"].startswith("7") for k in dlg.shown))
+dlg.kind.SetSelection(0)
+dlg.search.SetValue("годишен даночен биланс")
+dlg.fill()
+check("search in the full name", {"711213", "711216"} <= {k["konto"] for k in dlg.shown})
+dlg.search.SetValue("711213")
+dlg.fill()
+check("search by konto", [k["konto"] for k in dlg.shown] == ["711213"])
+r = dlg.report()
+check("report has the shown rows with full names", len(r.rows) == 1 and len(r.rows[0][1]) > 100)
+pdf = Path(sys.argv[1]).with_name("konta_test.pdf")
+reports.to_pdf(r, pdf)
+check("konta PDF written", pdf.stat().st_size > 1000)
+check("konta HTML has the full name", "годишен даночен биланс" in reports.to_html(r))
+pdf.unlink()
+dlg.Destroy()
+
+kd = registers.KontoDialog(frame)
+kd.f_full.SetValue("Основни плати - државни службеници")
+check("short name follows the full name", kd.f_short.GetValue() == "Основни плати - државни")
+kd.f_short.SetValue("Плати државни")
+kd.f_full.SetValue("Основни плати - државни службеници од ДКП")
+check("a short name typed by hand is kept", kd.f_short.GetValue() == "Плати државни")
+kd.f_konto.SetValue("401120")
+v = kd.values()
+check("dialog values", v == {"konto": "401120", "opis": "Плати државни", "opisfull": "Основни плати - државни службеници од ДКП"})
+kd.f_short.SetValue("")
+check("empty short name is made from the full name", kd.values()["opis"] == "Основни плати - државни")
+kd.Destroy()
 frame.Destroy()
 
 print("all checks passed")

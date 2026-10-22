@@ -96,8 +96,16 @@ The shipment screen is complete (every old button rebuilt).
 unused, code change refused when used, search, Печати / PDF) done and tested (`tools/test_registers.py`). The account
 name is shown next to the account on the shipment screen and on the print-outs; an empty account code opens СМЕТКИ to
 choose from (as the old program did).
-**КОНТА phase — decided 2026-10-21, data prepared, screens NOT built yet** (`extracted/ministry/` holds the public
-ministry PDFs and the seed files; `tools/import_konta.py` builds `konta_seed.csv`):
+**КОНТА register done and tested (2026-10-22)**: ribbon Шифрарник → Конта (`registers.KontaDialog` / `KontoDialog`, `konta.py`,
+`db.list_konta/save_konto/delete_konto/load_konta`, new column `KONTA.OPISFULL`; search in the full name, class 4/7 filter,
+full name of the selection shown under the list, add / edit / delete only when unused / code change refused when used,
+Печати / PDF; tests in `tools/test_registers.py`). The seed is loaded once per database with
+`PYTHONPATH=app python -X utf8 tools\load_konta_seed.py [settings.ini]` (adds missing konta, never touches existing ones) —
+**run on the real new database on 2026-10-22** (982 added, the 3 old konta unchanged; backup of the database before the load:
+`work/db/new_db_before_konta.fbk`, local). The old MAC C encoding cannot hold Latin letters, so «COVID» / «Д-Е V» are written
+with Cyrillic letters in the seed (`db._encodable` refuses any text that does not round-trip).
+**КОНТА phase — decisions 2026-10-21** (`extracted/ministry/` holds the public
+ministry PDFs and the seed files; `tools/import_konta.py` builds `konta_seed.csv` and `uplatni_seed.csv`):
 - Old program facts (checked in the old forms/asm): `KONTA` = `KONTO CHAR(6)` + `OPIS CHAR(30)`; forms `TTRZKON` = КОНТА
   register, `TTRZSM` = СМЕТКИ register (no payment-account list existed). No order form validates or looks up a konto;
   KONTA is read only by the specification (`SPECIF`, description cut at 30). Цел на дознака = 2 × 35 (`celdoz1/2`) on all
@@ -107,7 +115,11 @@ ministry PDFs and the seed files; `tools/import_konta.py` builds `konta_seed.csv
   `konta_seed.csv` = konto;opis30;opis_full;klasa — 393 rashodi (parsed from the Правилник text layer, MAC C → `macc.decode`)
   and 592 prihodi (the Службен весник PDF is scanned: hand-transcribed in `prihodi_transcribed.txt`; cross-check every
   konto against the payment-account table before loading).
-- **УПЛАТНИ СМЕТКИ** (new register, pages 22–33 of the prihodi PDF; seed file still to be transcribed): official code
+- **УПЛАТНИ СМЕТКИ** (new register; seed `uplatni_seed.csv` = banka;kod;naziv;konto, 366 accounts, hand-transcribed into
+  `uplatni_transcribed.txt`, name = the konto's official name, 16 rows have no konto in the PDF; every konto is
+  cross-checked against `konta_seed.csv` by `tools/import_konta.py`; verified against the real old data: 2610 of 2627 orders
+  with an 11-digit account match exactly, the rest are typos in the old data). Section 6 (customs) is printed as 840-
+  though its header mentions element 845 — kept as printed. Register fields: official code
   `840-01013`, name, linked prihoden konto. Stored on orders in `podsmetprim` as ONE 11-digit number without separators =
   bank (840/843) + **3-digit municipality code** + 5-digit official code (`840-01258` → `84010301258`), so the treasury
   recognises it. Used on **Налог 61 and 70 only**; on 73 and 76 the account is a free 15-character entry (institution
@@ -116,7 +128,8 @@ ministry PDFs and the seed files; `tools/import_konta.py` builds `konta_seed.csv
 - **ОПШТИНИ** (new register, seed `extracted/ministry/opstini.csv`, 81 municipalities): the middle code is a drop-down from
   it; default `103` = Битола, editable in ГЕНЕРАЛИИ (new field) and per order.
 - New accounts next year are added by hand in the КОНТА screen (no „import from new Службен весник" feature).
-- Build order: КОНТА screen (like СМЕТКИ) → ОПШТИНИ → УПЛАТНИ СМЕТКИ → order-form changes (61, 70, 73, 76).
+- Build order: КОНТА screen (done) → ОПШТИНИ → УПЛАТНИ СМЕТКИ → order-form changes (61, 70, 73, 76; pick a konto from КОНТА
+  with `KontaDialog(pick=True)`).
 Next: the other registers (конта, оператори, жиро-сметки/партнери, вработени), the report
 „Преглед на пратки по датум", login/operators, „Превземање на налози", the move to SQLite, and finally a custom theme.
 

@@ -3,7 +3,9 @@
   rashodi (class 4)  : read from the text layer of the Правилник; its text is in the old MAC C encoding -> macc.decode
   prihodi (class 7)  : the Службен весник PDF is scanned, so the text was transcribed by hand into
                        extracted/ministry/prihodi_transcribed.txt (one "konto name" per line) - read from there
-Output (extracted/ministry/): konta_seed.csv  (konto;opis30;opis_full;klasa;grupa)
+  uplatni smetki     : hand-transcribed too (scanned) into extracted/ministry/uplatni_transcribed.txt
+Output (extracted/ministry/): konta_seed.csv  (konto;opis30;opis_full;klasa)
+                              uplatni_seed.csv (banka;kod;naziv;konto) - every konto is checked against konta_seed
 
 Run:  demo/.venv/Scripts/python.exe -I -X utf8 tools/import_konta.py
 """
@@ -17,22 +19,12 @@ import pymupdf
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT / "app"))
 import macc  # noqa: E402
+from konta import OPIS_LEN, short_name as short  # noqa: E402
 
 MIN = ROOT / "extracted" / "ministry"
 RASHODI = MIN / "Pravilnik_za_klasifikacija_na_rashodite.pdf"
 PRIHODI_TXT = MIN / "prihodi_transcribed.txt"
-OPIS_LEN = 30   # old KONTA.OPIS CHAR(30)
-
-
-def short(text: str, limit: int = OPIS_LEN) -> str:
-    """Cut at a word boundary; the full name is kept in opis_full."""
-    text = " ".join(text.split())
-    if len(text) <= limit:
-        return text
-    cut = text[:limit]
-    if text[limit] != " " and " " in cut:
-        cut = cut[:cut.rfind(" ")]
-    return cut.rstrip(" -,(")
+UPLATNI_TXT = MIN / "uplatni_transcribed.txt"
 
 
 def rashodi_rows():
@@ -84,6 +76,28 @@ def prihodi_rows():
     return rows
 
 
+def uplatni_rows(names):
+    """[(banka, kod, naziv, konto)]; the name of a row with a konto is the konto's official name."""
+    rows, problems = [], []
+    for line in UPLATNI_TXT.read_text(encoding="utf8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        m = re.match(r"^(84[03])-(\d{5})\s+(?:(\d{6})|-\s+(.+))$", line)
+        if not m:
+            problems.append("cannot read: " + line)
+            continue
+        banka, kod, konto, naziv = m.groups()
+        if konto:
+            if konto not in names:
+                problems.append(f"{banka}-{kod}: konto {konto} is not in the konta list")
+            naziv = names.get(konto, "")
+        rows.append((banka, kod, naziv, konto or ""))
+    codes = [(b, k) for b, k, _, _ in rows]
+    problems += [f"duplicate account {b}-{k}" for b, k in sorted(set(c for c in codes if codes.count(c) > 1))]
+    return rows, problems
+
+
 def main():
     seen, result = {}, []
     for source in (rashodi_rows(), prihodi_rows()):
@@ -101,6 +115,14 @@ def main():
         w.writerows(result)
     print(len(result), "konta,", sum(1 for r in result if r[3] == "4"), "rashodi,", sum(1 for r in result if r[3] == "7"), "prihodi")
     print("names cut to", OPIS_LEN, ":", sum(1 for r in result if r[1] != r[2]))
+    rows, problems = uplatni_rows(seen)
+    with open(MIN / "uplatni_seed.csv", "w", encoding="utf8", newline="") as f:
+        w = csv.writer(f, delimiter=";")
+        w.writerow(["banka", "kod", "naziv", "konto"])
+        w.writerows(rows)
+    print(len(rows), "uplatni smetki,", sum(1 for r in rows if not r[3]), "without a konto")
+    for p in problems:
+        print("PROBLEM:", p)
 
 
 if __name__ == "__main__":

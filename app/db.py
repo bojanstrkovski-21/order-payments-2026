@@ -123,10 +123,12 @@ def _decoded(row, text_keys):
 NEW_COLUMNS = {
     "INIT": [("EMBS", "VARCHAR(10)"), ("EMAIL1", "VARCHAR(100)"), ("EMAIL2", "VARCHAR(100)"), ("EMAIL_FIN", "VARCHAR(100)")],
     "SMETKI": [("NAZIV", "VARCHAR(60)")],
+    "KONTA": [("OPISFULL", "VARCHAR(400)")],   # full official name; OPIS stays the old 30-character short form
 }
 LIVE_DATABASE = Path(r"D:\nalozi\NOVNAL.FDB")
 INIT_TEXT = ("naziv", "adresa", "mesto", "trzkan")
 SMETKI_TEXT = ("naziv",)
+KONTA_TEXT = ("opis", "opisfull")
 
 
 def _database_path():
@@ -314,6 +316,124 @@ def konta_descriptions():
         cur = con.cursor()
         cur.execute("select konto, opis from konta")
         return {_clean(r["konto"]): macc.decode(r["opis"]) for r in _rows(cur)}
+    finally:
+        con.close()
+
+
+def _konto_row(row):
+    """konta row -> konto, opis (30-character short form), opisfull as stored, naziv (full name, else the short one)."""
+    out = _decoded(row, KONTA_TEXT)
+    out["konto"] = (out["konto"] or "").strip()
+    out["naziv"] = out["opisfull"].strip() or out["opis"].strip()
+    return out
+
+
+def list_konta():
+    """КОНТА ordered by konto."""
+    con = connect()
+    try:
+        cur = con.cursor()
+        cur.execute("select * from konta order by konto")
+        return [_konto_row(r) for r in _rows(cur)]
+    finally:
+        con.close()
+
+
+def get_konto(konto: str):
+    for k in list_konta():
+        if k["konto"] == konto:
+            return k
+    return None
+
+
+def _encodable(text: str) -> bool:
+    """False when the old MAC C encoding cannot hold the text exactly: an unknown character would become '?' and a
+    Latin letter would be shown as a Cyrillic one."""
+    return macc.decode(macc.encode(text)) == text.rstrip()
+
+
+def save_konto(values: dict, old_code=None) -> None:
+    """Insert a new konto (old_code None) or update the konto old_code. values: konto, opis (<= 30), opisfull.
+    A konto must be unique; the code of a konto used on orders cannot change."""
+    for key, limit in (("opis", 30), ("opisfull", 400)):
+        if len(values[key]) > limit:
+            raise ValueError(f"ТЕКСТОТ Е ПРЕДОЛГ (најмногу {limit} знаци)")
+        if not _encodable(values[key]):
+            raise ValueError("ТЕКСТОТ СОДРЖИ ЗНАК КОЈ НЕ МОЖЕ ДА СЕ ЗАЧУВА")
+    values = {k: macc.encode(v) if k in KONTA_TEXT else v for k, v in values.items()}
+    cols = list(values)
+    con = connect()
+    try:
+        cur = con.cursor()
+        cur.execute("select count(*) from konta where konto=?", (values["konto"],))
+        taken = _first(cur)[0]
+        if taken and values["konto"] != old_code:
+            raise ValueError("ДУПЛИРАН ЗАПИС !")
+        if old_code is not None and values["konto"] != old_code:
+            cur.execute("select (select count(*) from promet where konzadolz=?) + (select count(*) from promet "
+                        "where konprim=?) from rdb$database", (old_code, old_code))
+            if _first(cur)[0]:
+                raise ValueError("КОНТОТО НЕ МОЖЕ ДА СЕ ПРОМЕНИ — СЕ КОРИСТИ ВО НАЛОЗИ")
+        if old_code is None:
+            cur.execute(f"insert into konta ({','.join(cols)}) values ({','.join('?' * len(cols))})",
+                        [values[c] for c in cols])
+        else:
+            cur.execute(f"update konta set {','.join(c + '=?' for c in cols)} where konto=?",
+                        [values[c] for c in cols] + [old_code])
+        con.commit()
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
+
+
+def konto_in_use(konto: str) -> int:
+    """How many orders use the konto as expense or revenue code."""
+    con = connect()
+    try:
+        cur = con.cursor()
+        cur.execute("select (select count(*) from promet where konzadolz=?) + (select count(*) from promet "
+                    "where konprim=?) from rdb$database", (konto, konto))
+        return _first(cur)[0]
+    finally:
+        con.close()
+
+
+def delete_konto(konto: str) -> None:
+    con = connect()
+    try:
+        cur = con.cursor()
+        cur.execute("delete from konta where konto=?", (konto,))
+        con.commit()
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
+
+
+def load_konta(rows):
+    """One-time load of the ministry list: add the konta that are missing, never touch an existing one.
+    rows: dicts with konto, opis, opisfull. Returns (added, already_there)."""
+    con = connect()
+    try:
+        cur = con.cursor()
+        cur.execute("select konto from konta")
+        have = {_clean(r[0]) for r in cur.fetchall()}
+        added = 0
+        for r in rows:
+            if r["konto"] in have:
+                continue
+            cur.execute("insert into konta (konto, opis, opisfull) values (?,?,?)",
+                        (r["konto"], macc.encode(r["opis"]), macc.encode(r["opisfull"])))
+            have.add(r["konto"])
+            added += 1
+        con.commit()
+        return added, len(rows) - added
+    except Exception:
+        con.rollback()
+        raise
     finally:
         con.close()
 

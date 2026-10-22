@@ -6,6 +6,7 @@ a name for every account.
 import wx
 
 import db
+import konta
 import reports
 import ui
 
@@ -226,3 +227,175 @@ class AccountsDialog(wx.Dialog):
 
     def on_print(self, event):
         reports.print_or_pdf(self, self.report(), "Сметки.pdf")
+
+
+class KontoDialog(wx.Dialog):
+    """One konto: code, full official name (new) and the 30-character short form (old OPIS)."""
+
+    def __init__(self, parent, konto=None):
+        super().__init__(parent, title="Ново конто" if konto is None else "Измена на конто")
+        self.konto = konto
+        grid = wx.FlexGridSizer(cols=2, vgap=8, hgap=12)
+        grid.AddGrowableCol(1)
+        self.f_konto = _row(self, grid, "Конто:", _text(self, 6, 80))
+        self.f_full = _row(self, grid, "Целосен назив:", _text(self, konta.FULL_LEN, 520))
+        self.f_short = _row(self, grid, "Кратко (за печатење, до 30 знаци):", _text(self, konta.OPIS_LEN, 280))
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        sizer.Add(grid, 0, wx.EXPAND | wx.ALL, 14)
+        sizer.Add(self.CreateStdDialogButtonSizer(wx.OK | wx.CANCEL), 0, wx.EXPAND | wx.ALL, 14)
+        self.FindWindowById(wx.ID_OK).SetLabel("Памти")
+        self.FindWindowById(wx.ID_CANCEL).SetLabel("Откажи")
+        self.SetSizerAndFit(sizer)
+        self.FindWindowById(wx.ID_OK).Bind(wx.EVT_BUTTON, self.on_save)
+        self.short_by_hand = False
+        if konto:
+            self.f_konto.SetValue(konto["konto"])
+            self.f_full.SetValue(konto["naziv"])
+            self.f_short.SetValue(konto["opis"].strip())
+            self.short_by_hand = True   # keep the stored short form until the full name is edited
+        self.f_full.Bind(wx.EVT_TEXT, self.on_full_changed)
+        self.f_short.Bind(wx.EVT_TEXT, self.on_short_changed)
+
+    def on_full_changed(self, event):
+        """The short form follows the full name (cut at a word boundary) until it is typed by hand."""
+        if not self.short_by_hand:
+            self.f_short.ChangeValue(konta.short_name(self.f_full.GetValue()))
+        event.Skip()
+
+    def on_short_changed(self, event):
+        short = self.f_short.GetValue()
+        self.short_by_hand = bool(short.strip()) and short != konta.short_name(self.f_full.GetValue())
+        event.Skip()
+
+    def values(self):
+        full = " ".join(self.f_full.GetValue().split())
+        short = " ".join(self.f_short.GetValue().split()) or konta.short_name(full)
+        return {"konto": self.f_konto.GetValue().strip(), "opis": short, "opisfull": full or short}
+
+    def on_save(self, event):
+        v = self.values()
+        if not (v["konto"].isdigit() and len(v["konto"]) == 6) or not v["opis"]:
+            ui.info(self, "ВНЕСЕТЕ ВРЕДНОСТИ (конто од 6 цифри и назив)")
+            return
+        try:
+            db.save_konto(v, old_code=self.konto["konto"] if self.konto else None)
+        except ValueError as problem:
+            ui.info(self, str(problem))
+            return
+        self.EndModal(wx.ID_OK)
+
+
+class KontaDialog(wx.Dialog):
+    """КОНТА — expense (class 4) and revenue (class 7) codes: search by code or name, add, edit, delete, print / PDF.
+    The search looks in the full name, so the right konto is easy to find when filling an order."""
+
+    CLASSES = [("Сите конта", None), ("Расходи (класа 4)", "4"), ("Приходи (класа 7)", "7")]
+
+    def __init__(self, parent, pick=False):
+        """pick=True: choose a konto for an order (the dialog returns wx.ID_OK and selected())."""
+        super().__init__(parent, title="Конта", size=(980, 600), style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
+        self.pick = pick
+        top = wx.BoxSizer(wx.HORIZONTAL)
+        self.search = wx.SearchCtrl(self)
+        self.search.SetDescriptiveText("Барај по конто или назив")
+        self.kind = wx.Choice(self, choices=[label for label, _ in self.CLASSES])
+        self.kind.SetSelection(0)
+        top.Add(self.search, 1, wx.RIGHT, 8)
+        top.Add(self.kind, 0)
+        self.list = wx.ListCtrl(self, style=wx.LC_REPORT | wx.LC_SINGLE_SEL)
+        self.list.InsertColumn(0, "Конто", width=70)
+        self.list.InsertColumn(1, "Назив", width=650)
+        self.list.InsertColumn(2, "Кратко (печатење)", width=200)
+        self.count = wx.StaticText(self)
+        self.detail = wx.StaticText(self, style=wx.ST_NO_AUTORESIZE, size=(-1, 58))   # full name of the selected konto
+        buttons = wx.BoxSizer(wx.HORIZONTAL)
+        specs = [("Додавање", self.on_add), ("Измена", self.on_edit), ("Бришење", self.on_delete),
+                 ("Печатење", self.on_print)]
+        if pick:
+            specs.append(("Избери", lambda e: self.EndModal(wx.ID_OK) if self.selected() else None))
+        specs.append(("Излез", lambda e: self.EndModal(wx.ID_CANCEL)))
+        for label, handler in specs:
+            button = wx.Button(self, label=label)
+            button.Bind(wx.EVT_BUTTON, handler)
+            buttons.Add(button, 0, wx.RIGHT, 6)
+        buttons.AddStretchSpacer()
+        buttons.Add(self.count, 0, wx.ALIGN_CENTER_VERTICAL)
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        sizer.Add(top, 0, wx.EXPAND | wx.ALL, 8)
+        sizer.Add(self.list, 1, wx.EXPAND | wx.LEFT | wx.RIGHT, 8)
+        sizer.Add(self.detail, 0, wx.EXPAND | wx.ALL, 8)
+        sizer.Add(buttons, 0, wx.EXPAND | wx.LEFT | wx.RIGHT | wx.BOTTOM, 8)
+        self.SetSizer(sizer)
+        self.search.Bind(wx.EVT_TEXT, lambda e: self.fill())
+        self.kind.Bind(wx.EVT_CHOICE, lambda e: self.fill())
+        self.list.Bind(wx.EVT_LIST_ITEM_SELECTED, lambda e: self.show_detail())
+        self.list.Bind(wx.EVT_LIST_ITEM_ACTIVATED, lambda e: self.EndModal(wx.ID_OK) if pick else self.on_edit(e))
+        self.konta, self.shown = [], []
+        self.reload()
+
+    def reload(self):
+        self.konta = db.list_konta()
+        self.fill()
+
+    def fill(self):
+        needle = " ".join(self.search.GetValue().lower().split())
+        wanted = self.CLASSES[self.kind.GetSelection()][1]
+        self.shown = [k for k in self.konta
+                      if (wanted is None or konta.konto_class(k["konto"]) == wanted)
+                      and (not needle or needle in k["konto"] or needle in k["naziv"].lower()
+                           or needle in k["opis"].lower())]
+        self.list.DeleteAllItems()
+        for k in self.shown:
+            self.list.Append([k["konto"], k["naziv"], k["opis"].strip()])
+        self.count.SetLabel(f"{len(self.shown)} од {len(self.konta)}")
+        if self.shown:
+            self.list.Select(0)
+        self.show_detail()
+
+    def show_detail(self):
+        konto = self.selected()
+        self.detail.SetLabel(f"{konto['konto']}  {konto['naziv']}" if konto else "")
+        self.detail.Wrap(self.detail.GetSize().width)
+
+    def selected(self):
+        index = self.list.GetFirstSelected()
+        return self.shown[index] if index >= 0 else None
+
+    def on_add(self, event):
+        self._edit(None)
+
+    def on_edit(self, event):
+        if self.selected():
+            self._edit(self.selected())
+
+    def _edit(self, konto):
+        dlg = KontoDialog(self, konto)
+        try:
+            if dlg.ShowModal() == wx.ID_OK:
+                self.reload()
+        finally:
+            dlg.Destroy()
+
+    def on_delete(self, event):
+        konto = self.selected()
+        if not konto:
+            return
+        used = db.konto_in_use(konto["konto"])
+        if used:
+            ui.info(self, f"КОНТОТО СЕ КОРИСТИ ВО {used} НАЛОЗИ — НЕ МОЖЕ ДА СЕ ИЗБРИШЕ")
+            return
+        if ui.confirm(self, "ОВОЈ ЗАПИС ЌЕ БИДЕ ИЗБРИШАН"):
+            db.delete_konto(konto["konto"])
+            self.reload()
+
+    def report(self):
+        """The list as filtered on screen (class and search), with the full names."""
+        search = self.search.GetValue().strip()
+        return reports.Report(
+            title="КОНТА", company=(db.get_init().get("naziv") or ""),
+            subtitle=self.kind.GetStringSelection().lower() + (f" — „{search}“" if search else ""),
+            columns=[("Конто", "C", 12), ("Назив", "L", 88)],
+            rows=[[k["konto"], k["naziv"]] for k in self.shown], signature=False)
+
+    def on_print(self, event):
+        reports.print_or_pdf(self, self.report(), "Конта.pdf")
