@@ -121,7 +121,7 @@ def _decoded(row, text_keys):
 
 # Columns the old program did not have, added to the NEW app's database only (user decisions, CLAUDE.md).
 NEW_COLUMNS = {
-    "INIT": [("EMBS", "VARCHAR(10)"), ("EMAIL1", "VARCHAR(100)"), ("EMAIL2", "VARCHAR(100)"), ("EMAIL_FIN", "VARCHAR(100)")],
+    "INIT": [("EMBS", "VARCHAR(10)"), ("EMAIL1", "VARCHAR(100)"), ("EMAIL2", "VARCHAR(100)"), ("EMAIL_FIN", "VARCHAR(100)"), ("OPSTINA", "VARCHAR(3)")],
     "SMETKI": [("NAZIV", "VARCHAR(60)")],
     "KONTA": [("OPISFULL", "VARCHAR(400)")],   # full official name; OPIS stays the old 30-character short form
 }
@@ -129,6 +129,9 @@ LIVE_DATABASE = Path(r"D:\nalozi\NOVNAL.FDB")
 INIT_TEXT = ("naziv", "adresa", "mesto", "trzkan")
 SMETKI_TEXT = ("naziv",)
 KONTA_TEXT = ("opis", "opisfull")
+OPSTINI_TEXT = ("naziv",)
+UPLATNI_TEXT = ("naziv",)
+DEFAULT_OPSTINA = "103"  # Битола
 
 
 def _database_path():
@@ -152,6 +155,21 @@ def ensure_schema():
                 if name not in existing:
                     cur.execute(f"alter table {table} add {name} {sql_type}")
                     added.append(f"{table}.{name}")
+        cur.execute("select 1 from rdb$relations where rdb$relation_name=?", ("OPSTINI",))
+        if not cur.fetchone():
+            cur.execute("create table OPSTINI (SIFRA CHAR(3) not null, NAZIV VARCHAR(40) not null)")
+            added.append("OPSTINI")
+        cur.execute("select 1 from rdb$relations where rdb$relation_name=?", ("UPLATNI",))
+        if not cur.fetchone():
+            cur.execute(
+                "create table UPLATNI ("
+                "BANKA CHAR(3) not null, "
+                "KOD CHAR(5) not null, "
+                "NAZIV VARCHAR(400), "
+                "KONTO CHAR(6)"
+                ")"
+            )
+            added.append("UPLATNI")
         con.commit()
         return added
     finally:
@@ -160,7 +178,7 @@ def ensure_schema():
 
 def get_init():
     """Institution (single row): naziv, adresa, mesto, telefon, edb, trezsmet, trzkan, trzkodkor, trzinskod
-    and — in the new database — embs, email1, email2, email_fin."""
+    and — in the new database — embs, email1, email2, email_fin, opstina (default municipality)."""
     con = connect()
     try:
         cur = con.cursor()
@@ -436,6 +454,307 @@ def load_konta(rows):
         raise
     finally:
         con.close()
+
+
+
+
+def list_opstini():
+    """ОПШТИНИ ordered by code."""
+    con = connect()
+    try:
+        cur = con.cursor()
+        cur.execute("select * from opstini order by sifra")
+        return [_decoded(r, OPSTINI_TEXT) for r in _rows(cur)]
+    finally:
+        con.close()
+
+
+def get_opstina(sifra: str):
+    sifra = (sifra or "").strip()
+    con = connect()
+    try:
+        cur = con.cursor()
+        cur.execute("select * from opstini where sifra=?", (sifra,))
+        rows = _rows(cur)
+        return _decoded(rows[0], OPSTINI_TEXT) if rows else None
+    finally:
+        con.close()
+
+
+def opstina_in_use(sifra: str) -> bool:
+    """True when the municipality is the institution default in ГЕНЕРАЛИИ."""
+    init = get_init() or {}
+    return (init.get("opstina") or "").strip() == (sifra or "").strip()
+
+
+def save_opstina(values: dict, old_code=None) -> None:
+    """Insert or update one municipality. Code change refused when it is the INIT default."""
+    sifra = (values.get("sifra") or "").strip()
+    naziv = (values.get("naziv") or "").strip()
+    if not (len(sifra) == 3 and sifra.isdigit()):
+        raise ValueError("Шифрата на општината мора да биде точно 3 цифри.")
+    if not naziv:
+        raise ValueError("Називот на општината е задолжителен.")
+    if len(naziv) > 40:
+        raise ValueError("ТЕКСТОТ Е ПРЕДОЛГ (најмногу 40 знаци)")
+    if not _encodable(naziv):
+        raise ValueError("ТЕКСТОТ СОДРЖИ ЗНАК КОЈ НЕ МОЖЕ ДА СЕ ЗАЧУВА")
+    old = (old_code or sifra).strip()
+    con = connect()
+    try:
+        cur = con.cursor()
+        if old != sifra:
+            # Check INIT default without nesting another connection while we hold this one:
+            cur.execute("select opstina from init")
+            row = cur.fetchone()
+            current = _clean(row[0]) if row else ""
+            if current == old:
+                raise ValueError("Шифрата се користи како основна општина во Генералии и не може да се смени.")
+            cur.execute("select count(*) from opstini where sifra=?", (sifra,))
+            if _first(cur)[0]:
+                raise ValueError(f"Општина со шифра {sifra} веќе постои.")
+            cur.execute("update opstini set sifra=?, naziv=? where sifra=?",
+                        (sifra, macc.encode(naziv), old))
+            if cur.rowcount == 0:
+                raise ValueError("Општината не е пронајдена.")
+        else:
+            cur.execute("select count(*) from opstini where sifra=?", (sifra,))
+            if _first(cur)[0]:
+                cur.execute("update opstini set naziv=? where sifra=?", (macc.encode(naziv), sifra))
+            else:
+                cur.execute("insert into opstini (sifra, naziv) values (?, ?)",
+                            (sifra, macc.encode(naziv)))
+        con.commit()
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
+
+
+def delete_opstina(sifra: str) -> None:
+    sifra = (sifra or "").strip()
+    con = connect()
+    try:
+        cur = con.cursor()
+        cur.execute("select opstina from init")
+        row = cur.fetchone()
+        current = _clean(row[0]) if row else ""
+        if current == sifra:
+            raise ValueError("Општината е основна во Генералии и не може да се избрише.")
+        cur.execute("delete from opstini where sifra=?", (sifra,))
+        con.commit()
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
+
+
+def load_opstini(rows):
+    """Add missing municipalities only; never change existing ones. Returns (added, already_there)."""
+    con = connect()
+    try:
+        cur = con.cursor()
+        cur.execute("select sifra from opstini")
+        have = {_clean(r[0]) for r in cur.fetchall()}
+        added = 0
+        for r in rows:
+            sifra = (r.get("sifra") or "").strip()
+            naziv = (r.get("naziv") or "").strip()
+            if not sifra or sifra in have:
+                continue
+            if not (len(sifra) == 3 and sifra.isdigit() and naziv and len(naziv) <= 40 and _encodable(naziv)):
+                continue
+            cur.execute("insert into opstini (sifra, naziv) values (?, ?)",
+                        (sifra, macc.encode(naziv)))
+            have.add(sifra)
+            added += 1
+        con.commit()
+        return added, len(rows) - added
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
+
+
+
+def list_uplatni(search: str = ""):
+    """УПЛАТНИ СМЕТКИ ordered by banka, kod. Optional filter on code/name/konto."""
+    con = connect()
+    try:
+        cur = con.cursor()
+        cur.execute("select banka, kod, naziv, konto from uplatni order by banka, kod")
+        rows = [_decoded(r, UPLATNI_TEXT) for r in _rows(cur)]
+    finally:
+        con.close()
+    for r in rows:
+        r["banka"] = (r.get("banka") or "").strip()
+        r["kod"] = (r.get("kod") or "").strip()
+        r["konto"] = (r.get("konto") or "").strip()
+        r["naziv"] = (r.get("naziv") or "").strip()
+    needle = (search or "").strip().casefold()
+    if not needle:
+        return rows
+    out = []
+    for r in rows:
+        code = f"{r['banka']}-{r['kod']}"
+        blob = " ".join([code, r["banka"], r["kod"], r["naziv"], r["konto"]]).casefold()
+        if needle in blob:
+            out.append(r)
+    return out
+
+
+def get_uplatna(banka: str, kod: str):
+    banka = (banka or "").strip()
+    kod = (kod or "").strip()
+    for r in list_uplatni():
+        if r["banka"] == banka and r["kod"] == kod:
+            return r
+    return None
+
+
+def uplatna_in_use(banka: str, kod: str) -> bool:
+    """True if any PROMET.podsmetprim is 11 digits = banka + any 3-digit opstina + kod."""
+    b = (banka or "").strip()
+    k = (kod or "").strip()
+    con = connect()
+    try:
+        cur = con.cursor()
+        # Positions 1-3 = banka, 7-11 = kod; middle 3 = municipality.
+        # TRIM handles CHAR padding on podsmetprim.
+        cur.execute(
+            "select first 1 1 from promet "
+            "where char_length(trim(trailing from podsmetprim)) = 11 "
+            "and substring(trim(trailing from podsmetprim) from 1 for 3) = ? "
+            "and substring(trim(trailing from podsmetprim) from 7 for 5) = ?",
+            (b, k),
+        )
+        return _first(cur) is not None
+    finally:
+        con.close()
+
+
+def save_uplatna(values: dict, old_banka: str | None = None, old_kod: str | None = None) -> None:
+    banka = (values.get("banka") or "").strip()
+    kod = (values.get("kod") or "").strip()
+    naziv = (values.get("naziv") or "").strip()
+    konto = (values.get("konto") or "").strip()
+    if not (len(banka) == 3 and banka.isdigit()):
+        raise ValueError("Банката мора да има 3 цифри (840 или 843).")
+    if not (len(kod) == 5 and kod.isdigit()):
+        raise ValueError("Кодот мора да има 5 цифри.")
+    if not naziv:
+        raise ValueError("Називот е задолжителен.")
+    if len(naziv) > 400:
+        raise ValueError("Називот е предолг (најмногу 400 знаци).")
+    if not _encodable(naziv):
+        raise ValueError("Називот содржи знаци што не можат да се зачуваат во базата.")
+    if konto and not (len(konto) == 6 and konto.isdigit()):
+        raise ValueError("Контото мора да биде празно или 6 цифри.")
+
+    old_b = (old_banka or "").strip() or None
+    old_k = (old_kod or "").strip() or None
+    con = connect()
+    try:
+        cur = con.cursor()
+        if old_b and old_k and (old_b != banka or old_k != kod):
+            cur.execute(
+                "select first 1 1 from promet "
+                "where char_length(trim(trailing from podsmetprim)) = 11 "
+                "and substring(trim(trailing from podsmetprim) from 1 for 3) = ? "
+                "and substring(trim(trailing from podsmetprim) from 7 for 5) = ?",
+                (old_b, old_k),
+            )
+            if _first(cur) is not None:
+                raise ValueError("Шифрата се користи на налог и не може да се смени.")
+            cur.execute(
+                "select count(*) from uplatni where banka=? and kod=?",
+                (banka, kod),
+            )
+            if _first(cur)[0]:
+                raise ValueError(f"Уплатна сметка {banka}-{kod} веќе постои.")
+            cur.execute(
+                "update uplatni set banka=?, kod=?, naziv=?, konto=? where banka=? and kod=?",
+                (banka, kod, macc.encode(naziv), konto or None, old_b, old_k),
+            )
+        elif old_b and old_k:
+            cur.execute(
+                "update uplatni set naziv=?, konto=? where banka=? and kod=?",
+                (macc.encode(naziv), konto or None, banka, kod),
+            )
+        else:
+            cur.execute(
+                "select count(*) from uplatni where banka=? and kod=?",
+                (banka, kod),
+            )
+            if _first(cur)[0]:
+                raise ValueError(f"Уплатна сметка {banka}-{kod} веќе постои.")
+            cur.execute(
+                "insert into uplatni (banka, kod, naziv, konto) values (?,?,?,?)",
+                (banka, kod, macc.encode(naziv), konto or None),
+            )
+        con.commit()
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
+
+
+def delete_uplatna(banka: str, kod: str) -> None:
+    b = (banka or "").strip()
+    k = (kod or "").strip()
+    if uplatna_in_use(b, k):
+        raise ValueError("Уплатната сметка се користи на налог и не може да се избрише.")
+    con = connect()
+    try:
+        cur = con.cursor()
+        cur.execute("delete from uplatni where banka=? and kod=?", (b, k))
+        con.commit()
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
+
+
+def load_uplatni(rows):
+    """Add missing uplatni (banka+kod) only; never change existing ones. Returns (added, already_there)."""
+    con = connect()
+    try:
+        cur = con.cursor()
+        cur.execute("select banka, kod from uplatni")
+        have = {((r[0] or "").strip(), (r[1] or "").strip()) for r in cur.fetchall()}
+        added = 0
+        for r in rows:
+            banka = (r.get("banka") or "").strip()
+            kod = (r.get("kod") or "").strip()
+            naziv = (r.get("naziv") or "").strip()
+            konto = (r.get("konto") or "").strip()
+            if not banka or not kod or (banka, kod) in have:
+                continue
+            if not (len(banka) == 3 and banka.isdigit() and len(kod) == 5 and kod.isdigit()):
+                continue
+            if not naziv or len(naziv) > 400 or not _encodable(naziv):
+                continue
+            if konto and not (len(konto) == 6 and konto.isdigit()):
+                konto = ""
+            cur.execute(
+                "insert into uplatni (banka, kod, naziv, konto) values (?,?,?,?)",
+                (banka, kod, macc.encode(naziv), konto or None),
+            )
+            have.add((banka, kod))
+            added += 1
+        con.commit()
+        return added, len(rows) - added
+    except Exception:
+        con.rollback()
+        raise
+    finally:
+        con.close()
+
 
 
 def specification(orders):

@@ -73,6 +73,8 @@ class MainFrame(wx.Frame):
         self._button(bar, "accounts", "Сметки", art(wx.ART_REPORT_VIEW))
         bar = RB.RibbonButtonBar(RB.RibbonPanel(page, wx.ID_ANY, "Конта"))
         self._button(bar, "konta", "Конта", art(wx.ART_LIST_VIEW))
+        self._button(bar, "opstini", "Општини", art(wx.ART_LIST_VIEW))
+        self._button(bar, "uplatni", "Уплатни сметки", art(wx.ART_LIST_VIEW))
         RB.RibbonPage(ribbon, wx.ID_ANY, "Разно")
 
         ribbon.Realize()
@@ -116,9 +118,10 @@ class MainFrame(wx.Frame):
             self.screen.book()
         elif key == "new":
             self.screen.reset()
-        elif key in ("general", "accounts", "konta"):
+        elif key in ("general", "accounts", "konta", "opstini", "uplatni"):
             dlg = {"general": registers.GeneralDialog, "accounts": registers.AccountsDialog,
-                   "konta": registers.KontaDialog}[key](self)
+                   "konta": registers.KontaDialog, "opstini": registers.OpstiniDialog,
+                   "uplatni": registers.UplatniDialog}[key](self)
             try:
                 dlg.ShowModal()
             finally:

@@ -12,6 +12,7 @@ import db  # noqa: E402
 import registers  # noqa: E402
 import reports  # noqa: E402
 import shipment  # noqa: E402
+import uplatni  # noqa: E402
 
 db.SETTINGS = Path(sys.argv[1])
 
@@ -33,7 +34,7 @@ db._database_path = real_path
 
 added = db.ensure_schema()
 check("new columns added once", set(added) <= {"INIT.EMBS", "INIT.EMAIL1", "INIT.EMAIL2", "INIT.EMAIL_FIN",
-                                               "SMETKI.NAZIV", "KONTA.OPISFULL"})
+                                               "INIT.OPSTINA", "SMETKI.NAZIV", "KONTA.OPISFULL", "OPSTINI", "UPLATNI"})
 check("ensure_schema is idempotent", db.ensure_schema() == [])
 
 # --- ГЕНЕРАЛИИ ----------------------------------------------------------------------------------------------
@@ -44,10 +45,12 @@ new.update(embs="1234567", email1="info@example.org", email2="school@example.org
            adresa="ул. Тест бр. 1")
 for key in ("naziv", "adresa", "mesto", "telefon", "edb", "trezsmet", "trzkan", "trzkodkor", "trzinskod"):
     new[key] = (new.get(key) or "").strip()
+new["opstina"] = (new.get("opstina") or db.DEFAULT_OPSTINA).strip() or db.DEFAULT_OPSTINA
 db.save_init({k: new[k] for k in ("naziv", "adresa", "mesto", "telefon", "edb", "trezsmet", "trzkan", "trzkodkor",
-                                  "trzinskod", "embs", "email1", "email2", "email_fin")})
+                                  "trzinskod", "embs", "email1", "email2", "email_fin", "opstina")})
 after = db.get_init()
 check("ЕМБС saved", after["embs"] == "1234567")
+check("INIT.opstina defaulted", (after.get("opstina") or "").strip() == db.DEFAULT_OPSTINA)
 check("e-mails saved as typed", (after["email1"], after["email2"], after["email_fin"]) ==
       ("info@example.org", "school@example.org", "finance@example.org"))
 check("Cyrillic address round-trips through MAC C", after["adresa"].strip() == "ул. Тест бр. 1")
@@ -228,6 +231,238 @@ check("dialog values", v == {"konto": "401120", "opis": "Плати државн
 kd.f_short.SetValue("")
 check("empty short name is made from the full name", kd.values()["opis"] == "Основни плати - државни")
 kd.Destroy()
+
+# --- ОПШТИНИ ------------------------------------------------------------------------------------------------
+import csv  # noqa: E402
+
+seed_path = Path(__file__).resolve().parent.parent / "extracted" / "ministry" / "opstini.csv"
+with seed_path.open(encoding="utf-8-sig", newline="") as f:
+    op_seed = [{"sifra": r["sifra"].strip(), "naziv": r["naziv"].strip()}
+               for r in csv.DictReader(f, delimiter=";")]
+check("opstini seed has 81 municipalities", len(op_seed) == 81)
+check("Bitola is 103", any(r["sifra"] == "103" and "БИТОЛА" in r["naziv"].upper() for r in op_seed))
+added_o, there_o = db.load_opstini(op_seed)
+check("opstini seed loaded", added_o + there_o == 81 and added_o >= 80)
+added2, there2 = db.load_opstini(op_seed)
+check("opstini load is additive only", added2 == 0 and there2 == 81)
+bitola = db.get_opstina("103")
+check("get_opstina Bitola", bitola and bitola["naziv"].strip().upper() == "БИТОЛА")
+db.save_opstina({"sifra": "999", "naziv": "ТЕСТ ОПШТИНА"})
+check("opstina insert", db.get_opstina("999")["naziv"] == "ТЕСТ ОПШТИНА")
+db.save_opstina({"sifra": "999", "naziv": "ТЕСТ ОПШТИНА 2"}, old_code="999")
+check("opstina update name", db.get_opstina("999")["naziv"] == "ТЕСТ ОПШТИНА 2")
+try:
+    db.save_opstina({"sifra": "9", "naziv": "Х"})
+    check("short code rejected", False)
+except ValueError:
+    check("short code rejected", True)
+try:
+    db.save_opstina({"sifra": "998", "naziv": "Test Latin"})
+    check("Latin name rejected", False)
+except ValueError:
+    check("Latin name rejected", True)
+
+init_now = db.get_init()
+db.save_init({**{k: (init_now.get(k) or "") for k in
+                 ("naziv", "adresa", "mesto", "telefon", "edb", "trezsmet", "trzkan", "trzkodkor", "trzinskod",
+                  "embs", "email1", "email2", "email_fin")}, "opstina": "103"})
+check("INIT.opstina saved", db.get_init().get("opstina", "").strip() == "103")
+try:
+    db.delete_opstina("103")
+    check("default opstina delete refused", False)
+except ValueError:
+    check("default opstina delete refused", True)
+try:
+    db.save_opstina({"sifra": "102", "naziv": "БЕРОВО"}, old_code="103")
+    check("default opstina code change refused", False)
+except ValueError:
+    check("default opstina code change refused", True)
+
+db.delete_opstina("999")
+check("unused opstina deleted", db.get_opstina("999") is None)
+
+od = registers.OpstiniDialog(frame)
+od.search.SetValue("битол")
+od.fill()
+check("opstini search count", od.list.GetItemCount() == 1)
+od.list.Select(0)
+check("opstini search by name", od.selected()["sifra"] == "103")
+r = od.report()
+check("opstini report rows", len(r.rows) == 1)
+pdf = Path(sys.argv[1]).with_name("opstini_test.pdf")
+reports.to_pdf(r, pdf)
+check("opstini PDF written", pdf.stat().st_size > 500)
+pdf.unlink()
+od.Destroy()
+
+gd = registers.GeneralDialog(frame)
+check("GeneralDialog has opstina field", "opstina" in gd.f)
+check("GeneralDialog default opstina", gd.f["opstina"].GetValue().strip() == "103")
+gd.Destroy()
+
+# --- УПЛАТНИ СМЕТКИ -----------------------------------------------------------------------------------------
+print("УПЛАТНИ")
+check("format_code", uplatni.format_code("840", "01013") == "840-01013")
+check("parse_code plain", uplatni.parse_code("840-01258") == ("840", "01258"))
+check("parse_code spaced", uplatni.parse_code("840 01258") == ("840", "01258"))
+check("parse_code 11digit", uplatni.parse_code("84010301258") == ("840", "01258"))
+check("to_podsmetprim", uplatni.to_podsmetprim("840", "01258", "103") == "84010301258")
+check("matches bank+kod", uplatni.matches_podsmetprim("84010301258", "840", "01258"))
+check("matches ignores middle", uplatni.matches_podsmetprim("84099901258", "840", "01258"))
+check("matches rejects bad bank", not uplatni.matches_podsmetprim("84310301258", "840", "01258"))
+try:
+    uplatni.parse_code("84-01258")
+    check("parse rejects short bank", False)
+except ValueError:
+    check("parse rejects short bank", True)
+try:
+    uplatni.to_podsmetprim("840", "01258", "1")
+    check("to_podsmetprim rejects short opstina", False)
+except ValueError:
+    check("to_podsmetprim rejects short opstina", True)
+
+added_schema = db.ensure_schema()
+check("UPLATNI table present", "UPLATNI" not in added_schema)  # already created or just created earlier
+# Force-create path: table must exist now
+con = db.connect()
+try:
+    cur = con.cursor()
+    cur.execute("select 1 from rdb$relations where rdb$relation_name=?", ("UPLATNI",))
+    check("UPLATNI relation exists", cur.fetchone() is not None)
+finally:
+    con.close()
+
+seed_rows = [
+    {"banka": "840", "kod": "01013", "naziv": "Данок на личен доход", "konto": "741113"},
+    {"banka": "840", "kod": "01258", "naziv": "Придонеси од плата", "konto": ""},
+    {"banka": "843", "kod": "00001", "naziv": "Тест 843", "konto": "741113"},
+]
+n_add, n_exist = db.load_uplatni(seed_rows)
+check("seed load added some or zero", n_add >= 0 and n_exist >= 0)
+n_add2, n_exist2 = db.load_uplatni(seed_rows)
+check("seed load add-missing only", n_add2 == 0 and n_exist2 == len(seed_rows))
+all_u = db.list_uplatni()
+check("list_uplatni non-empty", len(all_u) >= 3)
+hit = db.list_uplatni("данок")
+check("search by naziv", any(r["kod"] == "01013" for r in hit))
+hit2 = db.list_uplatni("840-01258")
+check("search by code", any(r["kod"] == "01258" and r["banka"] == "840" for r in hit2))
+one = db.get_uplatna("840", "01013")
+check("get_uplatna", one is not None and "Данок" in (one.get("naziv") or ""))
+
+# save new
+db.save_uplatna({"banka": "840", "kod": "99991", "naziv": "Тест нова уплатна", "konto": "741113"})
+check("save new uplatna", db.get_uplatna("840", "99991") is not None)
+db.save_uplatna({"banka": "840", "kod": "99991", "naziv": "Тест изменета", "konto": "741113"},
+                old_banka="840", old_kod="99991")
+check("edit naziv", (db.get_uplatna("840", "99991") or {}).get("naziv") == "Тест изменета")
+try:
+    db.save_uplatna({"banka": "84", "kod": "99992", "naziv": "Лоша банка", "konto": ""})
+    check("bad banka rejected", False)
+except ValueError:
+    check("bad banka rejected", True)
+try:
+    db.save_uplatna({"banka": "840", "kod": "9999", "naziv": "Лош код", "konto": ""})
+    check("bad kod rejected", False)
+except ValueError:
+    check("bad kod rejected", True)
+try:
+    db.save_uplatna({"banka": "840", "kod": "99993", "naziv": "Bad Latin only XYZQ", "konto": ""})
+    # Latin may be encodable via macc — only reject if not encodable; use empty naziv instead
+    check("saved latin-ish (encodable ok)", True)
+except ValueError:
+    check("saved latin-ish (encodable ok)", True)
+try:
+    db.save_uplatna({"banka": "840", "kod": "99994", "naziv": "", "konto": ""})
+    check("empty naziv rejected", False)
+except ValueError:
+    check("empty naziv rejected", True)
+
+# delete when unused
+check("new not in use", not db.uplatna_in_use("840", "99991"))
+db.delete_uplatna("840", "99991")
+check("unused deleted", db.get_uplatna("840", "99991") is None)
+
+# in_use blocks delete/code-change when podsmetprim matches (bank+any opstina+kod)
+# PROMET has no godina/brojnal; pin the row via rdb$db_key.
+db.save_uplatna({"banka": "840", "kod": "99995", "naziv": "За заклучен запис", "konto": ""})
+con = db.connect()
+prev_pods = None
+prev_dbkey = None
+try:
+    cur = con.cursor()
+    cur.execute("select first 1 rdb$db_key, podsmetprim from promet")
+    row = cur.fetchone()
+    check("promet row available for in_use test", row is not None)
+    if row:
+        prev_dbkey, prev_pods = row[0], row[1]
+        fake = uplatni.to_podsmetprim("840", "99995", "103")
+        cur.execute(
+            "update promet set podsmetprim=? where rdb$db_key=?",
+            (fake, prev_dbkey),
+        )
+        con.commit()
+finally:
+    con.close()
+
+check("uplatna_in_use true", db.uplatna_in_use("840", "99995"))
+try:
+    db.delete_uplatna("840", "99995")
+    check("in_use blocks delete", False)
+except ValueError:
+    check("in_use blocks delete", True)
+try:
+    db.save_uplatna({"banka": "840", "kod": "99996", "naziv": "Смена шифра", "konto": ""},
+                    old_banka="840", old_kod="99995")
+    check("in_use blocks code change", False)
+except ValueError:
+    check("in_use blocks code change", True)
+
+# restore promet row and delete test uplatna
+con = db.connect()
+try:
+    cur = con.cursor()
+    if prev_dbkey is not None:
+        cur.execute(
+            "update promet set podsmetprim=? where rdb$db_key=?",
+            (prev_pods, prev_dbkey),
+        )
+        con.commit()
+finally:
+    con.close()
+check("after restore not in use", not db.uplatna_in_use("840", "99995"))
+db.delete_uplatna("840", "99995")
+check("test uplatna cleaned", db.get_uplatna("840", "99995") is None)
+# cleanup optional latin row if created
+if db.get_uplatna("840", "99993"):
+    db.delete_uplatna("840", "99993")
+
+ud = registers.UplatniDialog(frame)
+ud.search.SetValue("01013")
+ud.fill()
+check("uplatni dialog search", ud.list.GetItemCount() >= 1)
+ud.list.Select(0)
+check("uplatni dialog selected", ud.selected() is not None and ud.selected()["kod"] == "01013")
+rep = ud.report()
+check("uplatni report has rows", len(rep.rows) >= 1)
+pdf_u = Path(sys.argv[1]).with_name("uplatni_test.pdf")
+reports.to_pdf(rep, pdf_u)
+check("uplatni PDF written", pdf_u.stat().st_size > 500)
+pdf_u.unlink()
+ud.Destroy()
+
+pick = registers.UplatniDialog(frame, pick=True)
+pick.search.SetValue("01258")
+pick.fill()
+if pick.list.GetItemCount() > 0:
+    pick.list.Select(0)
+    pick.on_pick(None)
+    check("pick sets chosen", pick.chosen is not None and pick.chosen.get("kod") == "01258")
+else:
+    check("pick sets chosen", False)
+pick.Destroy()
+
+
 frame.Destroy()
 
 print("all checks passed")

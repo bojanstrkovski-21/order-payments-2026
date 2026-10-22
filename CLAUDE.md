@@ -128,9 +128,10 @@ ministry PDFs and the seed files; `tools/import_konta.py` builds `konta_seed.csv
 - **ОПШТИНИ** (new register, seed `extracted/ministry/opstini.csv`, 81 municipalities): the middle code is a drop-down from
   it; default `103` = Битола, editable in ГЕНЕРАЛИИ (new field) and per order.
 - New accounts next year are added by hand in the КОНТА screen (no „import from new Службен весник" feature).
-- Build order: КОНТА screen (done) → ОПШТИНИ → УПЛАТНИ СМЕТКИ → order-form changes (61, 70, 73, 76; pick a konto from КОНТА
+- Build order: КОНТА screen (done) → ОПШТИНИ (done) → УПЛАТНИ СМЕТКИ → order-form changes (61, 70, 73, 76; pick a konto from КОНТА
   with `KontaDialog(pick=True)`).
-Next: the other registers (конта, оператори, жиро-сметки/партнери, вработени), the report
+**ОПШТИНИ register done and tested**: ribbon Шифрарник → Општини (`registers.OpstiniDialog` / `OpstinaDialog`, `db.list_opstini/save_opstina/delete_opstina/load_opstini`, table `OPSTINI`, `INIT.OPSTINA` default `103` Битола; seed `extracted/ministry/opstini.csv` via `tools/load_opstini_seed.py`; search, add/edit/delete when unused, Печати/PDF; tests in `tools/test_registers.py`).
+**УПЛАТНИ СМЕТКИ register done and tested**: ribbon Шифрарник → Уплатни сметки (`registers.UplatniDialog` / `UplatnaDialog`, `uplatni.py`, `db.list_uplatni/save_uplatna/delete_uplatna/load_uplatni`, table `UPLATNI`; seed `extracted/ministry/uplatni_seed.csv` via `tools/load_uplatni_seed.py`; search, add/edit/delete when unused, code change refused when used in PROMET.podsmetprim, Печати/PDF, pick=True for order forms; `uplatni.to_podsmetprim(banka,kod,opstina)` → 11-digit treasury account). Next: order-form changes (61, 70 pick uplatna; 73/76 + 61/70 pick konto), then the other registers (конта, оператори, жиро-сметки/партнери, вработени), the report
 „Преглед на пратки по датум", login/operators, „Превземање на налози", the move to SQLite, and finally a custom theme.
 
 Planned new feature (user, 2026-10-21 — build **after the registers**; the old program had nothing like it):

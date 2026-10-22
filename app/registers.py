@@ -9,6 +9,7 @@ import db
 import konta
 import reports
 import ui
+import uplatni
 
 
 def _row(parent, grid, label, ctrl):
@@ -45,6 +46,7 @@ class GeneralDialog(wx.Dialog):
             "trzkan": _row(self, grid, "Трезорска канцеларија:", _text(self, 20)),
             "trzkodkor": _row(self, grid, "Трезорски код на корисник:", _text(self, 3, 60)),
             "trzinskod": _row(self, grid, "Код на трезорска институција:", _text(self, 3, 60)),
+            "opstina": _row(self, grid, "Основна општина (шифра):", _text(self, 3, 60)),
         }
         mail = wx.StaticBoxSizer(wx.VERTICAL, self, "Е-пошта")
         mgrid = wx.FlexGridSizer(cols=2, vgap=8, hgap=12)
@@ -66,12 +68,16 @@ class GeneralDialog(wx.Dialog):
         self.FindWindowById(wx.ID_OK).Bind(wx.EVT_BUTTON, self.on_save)
         init = db.get_init()
         for key, ctrl in self.f.items():
-            ctrl.SetValue((init.get(key) or "").strip())
+            value = (init.get(key) or "").strip()
+            if key == "opstina" and not value:
+                value = db.DEFAULT_OPSTINA
+            ctrl.SetValue(value)
 
     def values(self):
         v = {k: c.GetValue().strip() for k, c in self.f.items()}
         v["telefon"] = _digits(v["telefon"])  # the old form stored the phone as 9 digits
         v["trzkodkor"], v["trzinskod"] = v["trzkodkor"].upper(), v["trzinskod"].upper()
+        v["opstina"] = "".join(c for c in v.get("opstina", "") if c.isdigit())[:3]
         return v
 
     def check(self, v):
@@ -399,3 +405,383 @@ class KontaDialog(wx.Dialog):
 
     def on_print(self, event):
         reports.print_or_pdf(self, self.report(), "Конта.pdf")
+
+
+class OpstinaDialog(wx.Dialog):
+    """One municipality: 3-digit code and name."""
+
+    def __init__(self, parent, opstina=None):
+        super().__init__(parent, title="Општина" if opstina else "Нова општина")
+        self.opstina = opstina
+        grid = wx.FlexGridSizer(cols=2, vgap=8, hgap=12)
+        grid.AddGrowableCol(1)
+        self.f_sifra = _row(self, grid, "Шифра:", _text(self, 3, 60))
+        self.f_naziv = _row(self, grid, "Назив:", _text(self, 40, 320))
+        if opstina:
+            self.f_sifra.SetValue((opstina.get("sifra") or "").strip())
+            self.f_naziv.SetValue((opstina.get("naziv") or "").strip())
+        buttons = self.CreateButtonSizer(wx.OK | wx.CANCEL)
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        sizer.Add(grid, 0, wx.ALL | wx.EXPAND, 12)
+        sizer.Add(buttons, 0, wx.ALL | wx.EXPAND, 12)
+        self.SetSizerAndFit(sizer)
+        self.CentreOnParent()
+        self.FindWindowById(wx.ID_OK).Bind(wx.EVT_BUTTON, self.on_save)
+
+    def values(self):
+        return {"sifra": self.f_sifra.GetValue().strip(), "naziv": self.f_naziv.GetValue().strip()}
+
+    def on_save(self, event):
+        v = self.values()
+        try:
+            db.save_opstina(v, old_code=self.opstina["sifra"] if self.opstina else None)
+        except ValueError as problem:
+            ui.info(self, str(problem))
+            return
+        self.EndModal(wx.ID_OK)
+
+
+class OpstiniDialog(wx.Dialog):
+    """ОПШТИНИ — municipalities (ministry codes): search, add, edit, delete, print / PDF.
+    pick=True returns the selected row via .chosen after OK.
+    """
+
+    COLUMNS = [("Шифра", "sifra", 70), ("Назив", "naziv", 280)]
+
+    def __init__(self, parent, pick=False):
+        super().__init__(parent, title="Општини", style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
+        self.pick = pick
+        self.chosen = None
+        self.rows = []
+        self.shown = []
+        self.search = wx.SearchCtrl(self, style=wx.TE_PROCESS_ENTER)
+        self.search.SetDescriptiveText("барај шифра или назив…")
+        self.list = wx.ListCtrl(self, style=wx.LC_REPORT | wx.LC_SINGLE_SEL)
+        for i, (title, _key, width) in enumerate(self.COLUMNS):
+            self.list.InsertColumn(i, title, width=width)
+        self.count = wx.StaticText(self, label="")
+        buttons = wx.BoxSizer(wx.HORIZONTAL)
+        specs = [("Нов", self.on_new), ("Измена", self.on_edit), ("Бришење", self.on_delete),
+                 ("Печати", self.on_print), ("PDF", self.on_pdf)]
+        if pick:
+            specs = [("Избери", self.on_pick)] + specs
+        for label, handler in specs:
+            button = wx.Button(self, label=label)
+            button.Bind(wx.EVT_BUTTON, handler)
+            buttons.Add(button, 0, wx.RIGHT, 6)
+        buttons.AddStretchSpacer()
+        buttons.Add(self.count, 0, wx.ALIGN_CENTER_VERTICAL)
+        close = wx.Button(self, wx.ID_CANCEL, label="Затвори")
+        buttons.Add(close, 0, wx.LEFT, 12)
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        sizer.Add(self.search, 0, wx.ALL | wx.EXPAND, 8)
+        sizer.Add(self.list, 1, wx.LEFT | wx.RIGHT | wx.EXPAND, 8)
+        sizer.Add(buttons, 0, wx.ALL | wx.EXPAND, 8)
+        self.SetSizer(sizer)
+        self.SetSize((520, 480))
+        self.CentreOnParent()
+        self.search.Bind(wx.EVT_TEXT, lambda e: self.fill())
+        self.search.Bind(wx.EVT_SEARCHCTRL_SEARCH_BTN, lambda e: self.fill())
+        self.list.Bind(wx.EVT_LIST_ITEM_ACTIVATED, self.on_activate)
+        self.reload()
+
+    def reload(self):
+        self.rows = db.list_opstini()
+        self.fill()
+
+    def fill(self):
+        needle = self.search.GetValue().strip().lower()
+        self.shown = [r for r in self.rows
+                      if not needle or needle in (r.get("sifra") or "").lower()
+                      or needle in (r.get("naziv") or "").lower()]
+        self.list.DeleteAllItems()
+        for r in self.shown:
+            i = self.list.InsertItem(self.list.GetItemCount(), (r.get("sifra") or "").strip())
+            self.list.SetItem(i, 1, (r.get("naziv") or "").strip())
+        self.count.SetLabel(f"{len(self.shown)} / {len(self.rows)}")
+
+    def selected(self):
+        i = self.list.GetFirstSelected()
+        return self.shown[i] if i >= 0 else None
+
+    def on_new(self, event):
+        dlg = OpstinaDialog(self)
+        try:
+            if dlg.ShowModal() == wx.ID_OK:
+                self.reload()
+        finally:
+            dlg.Destroy()
+
+    def on_edit(self, event):
+        row = self.selected()
+        if not row:
+            ui.info(self, "Изберете општина.")
+            return
+        self._edit(row)
+
+    def on_activate(self, event):
+        if self.pick:
+            self.on_pick(event)
+        else:
+            row = self.selected()
+            if row:
+                self._edit(row)
+
+    def _edit(self, row):
+        dlg = OpstinaDialog(self, row)
+        try:
+            if dlg.ShowModal() == wx.ID_OK:
+                self.reload()
+        finally:
+            dlg.Destroy()
+
+    def on_delete(self, event):
+        row = self.selected()
+        if not row:
+            ui.info(self, "Изберете општина.")
+            return
+        if not ui.confirm(self, f"Да се избрише општина {row['sifra']} — {row['naziv']}?"):
+            return
+        try:
+            db.delete_opstina(row["sifra"])
+        except ValueError as problem:
+            ui.info(self, str(problem))
+            return
+        self.reload()
+
+    def on_pick(self, event):
+        row = self.selected()
+        if not row:
+            ui.info(self, "Изберете општина.")
+            return
+        self.chosen = row
+        self.EndModal(wx.ID_OK)
+
+    def report(self):
+        return reports.Report(
+            title="ОПШТИНИ",
+            company=(db.get_init().get("naziv") or ""),
+            subtitle="шифри на општини",
+            columns=[("Шифра", "C", 10), ("Назив", "L", 50)],
+            rows=[[(r.get("sifra") or "").strip(), (r.get("naziv") or "").strip()] for r in self.shown],
+            signature=False,
+        )
+
+    def on_print(self, event):
+        reports.print_or_pdf(self, self.report(), "Opstini.pdf")
+
+    def on_pdf(self, event):
+        reports.print_or_pdf(self, self.report(), "Opstini.pdf")
+
+
+
+class UplatnaDialog(wx.Dialog):
+    """One payment account: banka (3), kod (5), naziv, linked prihoden konto."""
+
+    def __init__(self, parent, row=None):
+        super().__init__(parent, title="Уплатна сметка" if row else "Нова уплатна сметка")
+        self.row = row
+        grid = wx.FlexGridSizer(cols=2, vgap=8, hgap=12)
+        grid.AddGrowableCol(1)
+        self.f_banka = _row(self, grid, "Банка:", _text(self, 3, 60))
+        self.f_kod = _row(self, grid, "Код:", _text(self, 5, 80))
+        self.f_naziv = _row(self, grid, "Назив:", _text(self, 0, 420))
+        self.f_konto = _row(self, grid, "Конто:", _text(self, 6, 80))
+        if row:
+            self.f_banka.SetValue((row.get("banka") or "").strip())
+            self.f_kod.SetValue((row.get("kod") or "").strip())
+            self.f_naziv.SetValue((row.get("naziv") or "").strip())
+            self.f_konto.SetValue((row.get("konto") or "").strip())
+        buttons = self.CreateButtonSizer(wx.OK | wx.CANCEL)
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        sizer.Add(grid, 0, wx.ALL | wx.EXPAND, 12)
+        sizer.Add(buttons, 0, wx.ALL | wx.EXPAND, 12)
+        self.SetSizerAndFit(sizer)
+        self.CentreOnParent()
+        self.FindWindowById(wx.ID_OK).Bind(wx.EVT_BUTTON, self.on_save)
+
+    def values(self):
+        return {
+            "banka": self.f_banka.GetValue().strip(),
+            "kod": self.f_kod.GetValue().strip(),
+            "naziv": self.f_naziv.GetValue().strip(),
+            "konto": self.f_konto.GetValue().strip(),
+        }
+
+    def on_save(self, event):
+        v = self.values()
+        try:
+            db.save_uplatna(
+                v,
+                old_banka=self.row["banka"] if self.row else None,
+                old_kod=self.row["kod"] if self.row else None,
+            )
+        except ValueError as problem:
+            ui.info(self, str(problem))
+            return
+        self.EndModal(wx.ID_OK)
+
+
+class UplatniDialog(wx.Dialog):
+    """УПЛАТНИ СМЕТКИ — search, add, edit, delete, print / PDF.
+    pick=True returns the selected row via .chosen after OK (for Налог 61/70).
+    """
+
+    COLUMNS = [("Шифра", "code", 100), ("Назив", "naziv", 420), ("Конто", "konto", 80)]
+
+    def __init__(self, parent, pick=False):
+        super().__init__(
+            parent, title="Уплатни сметки",
+            style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER,
+        )
+        self.pick = pick
+        self.chosen = None
+        self.rows = []
+        self.shown = []
+        self.search = wx.SearchCtrl(self, style=wx.TE_PROCESS_ENTER)
+        self.search.SetDescriptiveText("барај шифра, назив или конто…")
+        self.list = wx.ListCtrl(self, style=wx.LC_REPORT | wx.LC_SINGLE_SEL)
+        for i, (title, _key, width) in enumerate(self.COLUMNS):
+            self.list.InsertColumn(i, title, width=width)
+        self.detail = wx.StaticText(self, label="")
+        self.detail.Wrap(760)
+        self.count = wx.StaticText(self, label="")
+        buttons = wx.BoxSizer(wx.HORIZONTAL)
+        specs = [
+            ("Нов", self.on_new), ("Измена", self.on_edit), ("Бришење", self.on_delete),
+            ("Печати", self.on_print), ("PDF", self.on_pdf),
+        ]
+        if pick:
+            specs = [("Избери", self.on_pick)] + specs
+        for label, handler in specs:
+            button = wx.Button(self, label=label)
+            button.Bind(wx.EVT_BUTTON, handler)
+            buttons.Add(button, 0, wx.RIGHT, 6)
+        buttons.AddStretchSpacer()
+        buttons.Add(self.count, 0, wx.ALIGN_CENTER_VERTICAL)
+        close = wx.Button(self, wx.ID_CANCEL, label="Затвори")
+        buttons.Add(close, 0, wx.LEFT, 12)
+        sizer = wx.BoxSizer(wx.VERTICAL)
+        sizer.Add(self.search, 0, wx.ALL | wx.EXPAND, 8)
+        sizer.Add(self.list, 1, wx.LEFT | wx.RIGHT | wx.EXPAND, 8)
+        sizer.Add(self.detail, 0, wx.LEFT | wx.RIGHT | wx.TOP | wx.EXPAND, 8)
+        sizer.Add(buttons, 0, wx.ALL | wx.EXPAND, 8)
+        self.SetSizer(sizer)
+        self.SetSize((900, 560))
+        self.CentreOnParent()
+        self.search.Bind(wx.EVT_TEXT, lambda e: self.fill())
+        self.search.Bind(wx.EVT_SEARCHCTRL_SEARCH_BTN, lambda e: self.fill())
+        self.list.Bind(wx.EVT_LIST_ITEM_ACTIVATED, self.on_activate)
+        self.list.Bind(wx.EVT_LIST_ITEM_SELECTED, self.on_select)
+        self.reload()
+
+    @staticmethod
+    def _code(row):
+        return uplatni.format_code(row.get("banka") or "", row.get("kod") or "")
+
+    def reload(self):
+        self.rows = db.list_uplatni()
+        self.fill()
+
+    def fill(self):
+        needle = self.search.GetValue().strip().lower()
+        self.shown = []
+        for r in self.rows:
+            code = self._code(r)
+            blob = " ".join([
+                code, r.get("banka") or "", r.get("kod") or "",
+                r.get("naziv") or "", r.get("konto") or "",
+            ]).lower()
+            if not needle or needle in blob:
+                self.shown.append(r)
+        self.list.DeleteAllItems()
+        for r in self.shown:
+            i = self.list.InsertItem(self.list.GetItemCount(), self._code(r))
+            self.list.SetItem(i, 1, (r.get("naziv") or "").strip())
+            self.list.SetItem(i, 2, (r.get("konto") or "").strip())
+        self.count.SetLabel(f"{len(self.shown)} / {len(self.rows)}")
+        self.detail.SetLabel("")
+
+    def selected(self):
+        i = self.list.GetFirstSelected()
+        return self.shown[i] if i >= 0 else None
+
+    def on_select(self, event):
+        row = self.selected()
+        if not row:
+            self.detail.SetLabel("")
+            return
+        self.detail.SetLabel(f"{self._code(row)}  {(row.get('naziv') or '').strip()}")
+
+    def on_new(self, event):
+        dlg = UplatnaDialog(self)
+        try:
+            if dlg.ShowModal() == wx.ID_OK:
+                self.reload()
+        finally:
+            dlg.Destroy()
+
+    def on_edit(self, event):
+        row = self.selected()
+        if not row:
+            ui.info(self, "Изберете уплатна сметка.")
+            return
+        self._edit(row)
+
+    def on_activate(self, event):
+        if self.pick:
+            self.on_pick(event)
+        else:
+            row = self.selected()
+            if row:
+                self._edit(row)
+
+    def _edit(self, row):
+        dlg = UplatnaDialog(self, row)
+        try:
+            if dlg.ShowModal() == wx.ID_OK:
+                self.reload()
+        finally:
+            dlg.Destroy()
+
+    def on_delete(self, event):
+        row = self.selected()
+        if not row:
+            ui.info(self, "Изберете уплатна сметка.")
+            return
+        code = self._code(row)
+        if not ui.confirm(self, f"Да се избрише уплатна сметка {code}?"):
+            return
+        try:
+            db.delete_uplatna(row["banka"], row["kod"])
+        except ValueError as problem:
+            ui.info(self, str(problem))
+            return
+        self.reload()
+
+    def on_pick(self, event):
+        row = self.selected()
+        if not row:
+            ui.info(self, "Изберете уплатна сметка.")
+            return
+        self.chosen = row
+        self.EndModal(wx.ID_OK)
+
+    def report(self):
+        return reports.Report(
+            title="УПЛАТНИ СМЕТКИ",
+            company=(db.get_init().get("naziv") or ""),
+            subtitle="уплатни сметки (банкарски кодови)",
+            columns=[("Шифра", "C", 14), ("Назив", "L", 70), ("Конто", "C", 10)],
+            rows=[
+                [self._code(r), (r.get("naziv") or "").strip(), (r.get("konto") or "").strip()]
+                for r in self.shown
+            ],
+            signature=False,
+        )
+
+    def on_print(self, event):
+        reports.print_or_pdf(self, self.report(), "Uplatni.pdf")
+
+    def on_pdf(self, event):
+        reports.print_or_pdf(self, self.report(), "Uplatni.pdf")
