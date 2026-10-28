@@ -155,6 +155,8 @@ class AccountsDialog(wx.Dialog):
         """pick=True: choose an account (the shipment screen opens this when the code is left empty)."""
         super().__init__(parent, title="Сметки", size=(720, 520), style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
         self.pick = pick
+        self.chosen = None
+        self.chosen = None
         self.search = wx.SearchCtrl(self)
         self.search.SetDescriptiveText("Барај по шифра, назив или сметка")
         self.list = wx.ListCtrl(self, style=wx.LC_REPORT | wx.LC_SINGLE_SEL)
@@ -164,7 +166,7 @@ class AccountsDialog(wx.Dialog):
         specs = [("Додавање", self.on_add), ("Измена", self.on_edit), ("Бришење", self.on_delete),
                  ("Печатење", self.on_print)]
         if pick:
-            specs.append(("Избери", lambda e: self.EndModal(wx.ID_OK) if self.selected() else None))
+            specs.append(("Избери", self.on_pick_ok))
         specs.append(("Излез", lambda e: self.EndModal(wx.ID_CANCEL)))
         for label, handler in specs:
             button = wx.Button(self, label=label)
@@ -176,7 +178,7 @@ class AccountsDialog(wx.Dialog):
         sizer.Add(buttons, 0, wx.ALL, 8)
         self.SetSizer(sizer)
         self.search.Bind(wx.EVT_TEXT, lambda e: self.fill())
-        self.list.Bind(wx.EVT_LIST_ITEM_ACTIVATED, lambda e: self.EndModal(wx.ID_OK) if pick else self.on_edit(e))
+        self.list.Bind(wx.EVT_LIST_ITEM_ACTIVATED, lambda e: self.on_pick_ok(e) if pick else self.on_edit(e))
         self.accounts, self.shown = [], []
         self.reload()
 
@@ -298,9 +300,10 @@ class KontaDialog(wx.Dialog):
     CLASSES = [("Сите конта", None), ("Расходи (класа 4)", "4"), ("Приходи (класа 7)", "7")]
 
     def __init__(self, parent, pick=False):
-        """pick=True: choose a konto for an order (the dialog returns wx.ID_OK and selected())."""
+        """pick=True: choose a konto for an order (the dialog returns wx.ID_OK and .chosen)."""
         super().__init__(parent, title="Конта", size=(980, 600), style=wx.DEFAULT_DIALOG_STYLE | wx.RESIZE_BORDER)
         self.pick = pick
+        self.chosen = None
         top = wx.BoxSizer(wx.HORIZONTAL)
         self.search = wx.SearchCtrl(self)
         self.search.SetDescriptiveText("Барај по конто или назив")
@@ -318,7 +321,7 @@ class KontaDialog(wx.Dialog):
         specs = [("Додавање", self.on_add), ("Измена", self.on_edit), ("Бришење", self.on_delete),
                  ("Печатење", self.on_print)]
         if pick:
-            specs.append(("Избери", lambda e: self.EndModal(wx.ID_OK) if self.selected() else None))
+            specs.append(("Избери", self.on_pick_ok))
         specs.append(("Излез", lambda e: self.EndModal(wx.ID_CANCEL)))
         for label, handler in specs:
             button = wx.Button(self, label=label)
@@ -335,7 +338,7 @@ class KontaDialog(wx.Dialog):
         self.search.Bind(wx.EVT_TEXT, lambda e: self.fill())
         self.kind.Bind(wx.EVT_CHOICE, lambda e: self.fill())
         self.list.Bind(wx.EVT_LIST_ITEM_SELECTED, lambda e: self.show_detail())
-        self.list.Bind(wx.EVT_LIST_ITEM_ACTIVATED, lambda e: self.EndModal(wx.ID_OK) if pick else self.on_edit(e))
+        self.list.Bind(wx.EVT_LIST_ITEM_ACTIVATED, lambda e: self.on_pick_ok(e) if pick else self.on_edit(e))
         self.konta, self.shown = [], []
         self.reload()
 
@@ -394,6 +397,15 @@ class KontaDialog(wx.Dialog):
             db.delete_konto(konto["konto"])
             self.reload()
 
+
+    def on_pick_ok(self, event=None):
+        row = self.selected()
+        if not row:
+            ui.info(self, "Изберете конто.")
+            return
+        self.chosen = row
+        self.EndModal(wx.ID_OK)
+
     def report(self):
         """The list as filtered on screen (class and search), with the full names."""
         search = self.search.GetValue().strip()
@@ -406,6 +418,25 @@ class KontaDialog(wx.Dialog):
     def on_print(self, event):
         reports.print_or_pdf(self, self.report(), "Конта.pdf")
 
+
+
+    def on_list_activate(self, event):
+        if self.pick:
+            row = self.selected()
+            if not row:
+                return
+            self.chosen = row
+            self.EndModal(wx.ID_OK)
+        else:
+            self.on_edit(event)
+
+    def finish_pick(self):
+        row = self.selected()
+        if not row:
+            ui.info(self, "Изберете конто.")
+            return
+        self.chosen = row
+        self.EndModal(wx.ID_OK)
 
 class OpstinaDialog(wx.Dialog):
     """One municipality: 3-digit code and name."""

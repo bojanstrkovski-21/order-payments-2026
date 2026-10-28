@@ -9,7 +9,9 @@ import wx
 import wx.adv
 
 import db
+import registers
 import ui
+import uplatni
 import workdays
 
 # Recipient registers. `account` is the register column shown as the recipient account.
@@ -88,6 +90,64 @@ def _get_date(picker):
 def _set_date(picker, day):
     if picker:
         picker.SetValue(wx.DateTime.FromDMY(day.day, day.month - 1, day.year) if day else wx.DefaultDateTime)
+
+
+
+def _order_opstina(shipment=None) -> str:
+    """3-digit municipality for uplatna podsmetprim (INIT default, else 103)."""
+    init = (shipment or {}).get("init") if isinstance(shipment, dict) else None
+    if not init:
+        init = db.get_init() or {}
+    code = (init.get("opstina") or "").strip() or db.DEFAULT_OPSTINA
+    return code if len(code) == 3 and code.isdigit() else db.DEFAULT_OPSTINA
+
+
+def pick_konto(parent, kind: str = "all"):
+    """Open КОНТА picker. kind: all | 4 | 7. Returns 6-digit konto or None."""
+    dlg = registers.KontaDialog(parent, pick=True)
+    try:
+        # KontaDialog uses radio: 0=all, 1=class4, 2=class7 (see registers.KontaDialog)
+        if kind == "4" and hasattr(dlg, "kind"):
+            dlg.kind.SetSelection(1)
+            dlg.fill()
+        elif kind == "7" and hasattr(dlg, "kind"):
+            dlg.kind.SetSelection(2)
+            dlg.fill()
+        if dlg.ShowModal() != wx.ID_OK:
+            return None
+        row = getattr(dlg, "chosen", None) or dlg.selected()
+        return (row.get("konto") or "").strip() if row else None
+    finally:
+        dlg.Destroy()
+
+
+def pick_uplatna(parent, shipment=None):
+    """Open УПЛАТНИ picker; return 11-digit podsmetprim or None."""
+    dlg = registers.UplatniDialog(parent, pick=True)
+    try:
+        if dlg.ShowModal() != wx.ID_OK:
+            return None
+        row = getattr(dlg, "chosen", None) or dlg.selected()
+        if not row:
+            return None
+        opstina = _order_opstina(shipment)
+        return uplatni.to_podsmetprim(row["banka"], row["kod"], opstina)
+    finally:
+        dlg.Destroy()
+
+
+def _attach_pick(ctrl, on_pick, parent):
+    """Add a … button next to ctrl (must already be in a sizer) — returns a horizontal sizer with ctrl+btn.
+
+    Prefer calling this *before* the control is added to its final sizer: build the pair first.
+    """
+    row = wx.BoxSizer(wx.HORIZONTAL)
+    row.Add(ctrl, 1, wx.EXPAND | wx.RIGHT, 4)
+    btn = wx.Button(parent, label="…", size=(28, -1))
+    btn.SetToolTip("Избор од шифрарник")
+    btn.Bind(wx.EVT_BUTTON, lambda e: on_pick())
+    row.Add(btn, 0)
+    return row
 
 
 class OrderDialog(wx.Dialog):
@@ -308,6 +368,7 @@ class OrderDialog(wx.Dialog):
             self.clear(first=True)
         else:
             self.load(order)
+        self._wire_register_picks()
 
     # ----- helpers -----------------------------------------------------------
     def set_default_valdat(self):
@@ -330,6 +391,64 @@ class OrderDialog(wx.Dialog):
             self.on_cancel(event)
         else:
             event.Skip()
+
+
+    def _wire_register_picks(self):
+        """… buttons + empty kill-focus open УПЛАТНИ / КОНТА pickers (fields stay free text)."""
+        if self.f_raskon is not None:
+            self._bind_konto_pick(self.f_raskon, kind="4")
+        if getattr(self, "f_prihsif", None) is not None:
+            self._bind_konto_pick(self.f_prihsif, kind="7")
+        if getattr(self, "f_uplsmet", None) is not None and self.VIDOBR in ("61", "70"):
+            self._bind_uplatna_pick(self.f_uplsmet)
+
+    def _bind_konto_pick(self, ctrl, kind="all"):
+        def do_pick(force=False):
+            if not force and ctrl.GetValue().strip():
+                return
+            code = pick_konto(self, kind=kind)
+            if code:
+                ctrl.SetValue(code)
+        btn_parent = ctrl.GetParent()
+        # Find the sizer that contains ctrl and insert a … button after it if possible.
+        self._add_ellipsis_button(ctrl, lambda e: do_pick(force=True))
+        ctrl.Bind(wx.EVT_KILL_FOCUS, lambda e: (e.Skip(), wx.CallAfter(do_pick, False)))
+
+    def _bind_uplatna_pick(self, ctrl):
+        def do_pick(force=False):
+            if not force and ctrl.GetValue().strip():
+                return
+            value = pick_uplatna(self, self.shipment)
+            if value:
+                ctrl.SetValue(value)
+        self._add_ellipsis_button(ctrl, lambda e: do_pick(force=True))
+        ctrl.Bind(wx.EVT_KILL_FOCUS, lambda e: (e.Skip(), wx.CallAfter(do_pick, False)))
+
+    def _add_ellipsis_button(self, ctrl, handler):
+        """Insert a … button after ctrl in its containing sizer when layout allows."""
+        parent = ctrl.GetParent()
+        sizer = ctrl.GetContainingSizer()
+        if sizer is None:
+            return
+        btn = wx.Button(parent, label="…", size=(28, -1))
+        btn.SetToolTip("Избор од шифрарник")
+        btn.Bind(wx.EVT_BUTTON, handler)
+        # Try to place the button next to the control
+        try:
+            # FlexGrid / Box: insert after ctrl's position
+            items = list(sizer.GetChildren())
+            idx = None
+            for i, it in enumerate(items):
+                if it.GetWindow() is ctrl:
+                    idx = i
+                    break
+            if idx is not None:
+                sizer.Insert(idx + 1, btn, 0, wx.LEFT | wx.ALIGN_CENTER_VERTICAL, 4)
+            else:
+                sizer.Add(btn, 0, wx.LEFT | wx.ALIGN_CENTER_VERTICAL, 4)
+        except Exception:
+            sizer.Add(btn, 0, wx.LEFT, 4)
+
 
     def clear(self, first=False):
         """cisti: empties the order fields for the next order; submission date and place stay."""

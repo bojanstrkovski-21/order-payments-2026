@@ -128,11 +128,12 @@ ministry PDFs and the seed files; `tools/import_konta.py` builds `konta_seed.csv
 - **ОПШТИНИ** (new register, seed `extracted/ministry/opstini.csv`, 81 municipalities): the middle code is a drop-down from
   it; default `103` = Битола, editable in ГЕНЕРАЛИИ (new field) and per order.
 - New accounts next year are added by hand in the КОНТА screen (no „import from new Службен весник" feature).
-- Build order: КОНТА screen (done) → ОПШТИНИ (done) → УПЛАТНИ СМЕТКИ → order-form changes (61, 70, 73, 76; pick a konto from КОНТА
-  with `KontaDialog(pick=True)`).
+- Build order: КОНТА (done) → ОПШТИНИ (done) → УПЛАТНИ СМЕТКИ (done) → order-form picks (61/70 uplatna + konto; 73/76 konto) — **in progress**.
 **ОПШТИНИ register done and tested**: ribbon Шифрарник → Општини (`registers.OpstiniDialog` / `OpstinaDialog`, `db.list_opstini/save_opstina/delete_opstina/load_opstini`, table `OPSTINI`, `INIT.OPSTINA` default `103` Битола; seed `extracted/ministry/opstini.csv` via `tools/load_opstini_seed.py`; search, add/edit/delete when unused, Печати/PDF; tests in `tools/test_registers.py`).
 **УПЛАТНИ СМЕТКИ register done and tested**: ribbon Шифрарник → Уплатни сметки (`registers.UplatniDialog` / `UplatnaDialog`, `uplatni.py`, `db.list_uplatni/save_uplatna/delete_uplatna/load_uplatni`, table `UPLATNI`; seed `extracted/ministry/uplatni_seed.csv` via `tools/load_uplatni_seed.py`; search, add/edit/delete when unused, code change refused when used in PROMET.podsmetprim, Печати/PDF, pick=True for order forms; `uplatni.to_podsmetprim(banka,kod,opstina)` → 11-digit treasury account). Next: order-form changes (61, 70 pick uplatna; 73/76 + 61/70 pick konto), then the other registers (конта, оператори, жиро-сметки/партнери, вработени), the report
 „Преглед на пратки по датум", login/operators, „Превземање на налози", the move to SQLite, and finally a custom theme.
+
+**Order-form picks (IN PROGRESS, 2026-04 session):** helpers already in `app/orders.py` — `_order_opstina`, `pick_konto`, `pick_uplatna`, `_attach_pick`, `OrderDialog._wire_register_picks` / `_bind_konto_pick` / `_bind_uplatna_pick` (… button + empty kill-focus opens picker; field stays free text). 61/70: uplatna → 11-digit podsmetprim via INIT.opstina (default 103); rashod konto class 4; prihod konto class 7. 73/76: free account (no uplatni list); konto pick still applies where fields exist. **Before next session:** (1) confirm `orders.py` compiles (if/else around `_wire_register_picks` was briefly broken — fixed at end-session); (2) ensure `KontaDialog` sets `.chosen` on pick (UplatniDialog already does); (3) finish UI placement of … buttons if not visible on all forms; (4) add tests; (5) load uplatni seed on real new DB when user is ready (`PYTHONPATH=app python -X utf8 tools\load_uplatni_seed.py app\settings.ini` — never live `D:\nalozi`). Do **not** leave `tools/_wire_order_picks.py` (one-shot; deleted at end-session).
 
 Planned new feature (user, 2026-10-21 — build **after the registers**; the old program had nothing like it):
 „**Плаќања по примач**" under Прегледи — (1) one recipient (partner/employee from the register, or name/account search
@@ -145,3 +146,8 @@ Period filter: the user chooses Датум на валута / на поднес
 
 This file is the canonical project record. Claude also keeps private notes outside the repository (credentials,
 personal-data warnings, machine state) — update both together when anything changes, and never let them contradict.
+
+## Session continuity (GrokCode)
+- GrokCode continues the same CLAUDE.md memory and app/tools layout; no separate agent branch needed.
+- REA/Ghidra: local `.mcp.json` + snapshot `work/rea/novnal_exe.snapshot`; reopen with open_binary `Nalozi\\NOVNAL.exe`. Use for RE only when a behaviour is still unclear — registers/order work is mostly app-side now.
+- User commits via `.\push.ps1`; agent does not push. Public repo — no passwords/DB/personal data.
