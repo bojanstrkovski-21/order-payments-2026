@@ -1,0 +1,16 @@
+# Python packages for the NOVNAL rewrite (Python 3.14, Windows). Install into demo\.venv:
+#   py -3.14 -m venv demo\.venv
+#   demo\.venv\Scripts\python.exe -m pip install -r requirements.txt
+# Versions are the ones the project was built and tested with.
+
+# --- the app (app\*.py) ---
+wxPython==4.3.2        # window, ribbon, dialogs, printing
+firebirdsql==1.4.7     # pure-Python Firebird driver (the app talks to the Firebird server on localhost)
+fpdf2==2.8.9           # the program's own „Сними како PDF" (pulls in fonttools and pillow)
+
+# --- tests and data tools (tools\*.py) ---
+pymupdf==2.0           # reads PDFs: tools\import_konta.py and test_reports.py
+
+# --- reverse engineering of the old program (only if you reopen NOVNAL.exe; see docs\new_machine_setup.md) ---
+pefile==2024.8.26
+capstone==5.0.9

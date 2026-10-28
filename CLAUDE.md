@@ -10,7 +10,10 @@ in `extracted/*_spec.md`. The repository is **public** — never commit personal
   Virtual environment: `demo/.venv` (wxPython, firebirdsql, passlib, pefile, capstone, fonttools, pillow).
 - `app/` — the new program: `main.py` (window + ribbon), `shipment.py` (ВНЕСУВАЊЕ НА НАЛОЗИ), `reports.py` (print-outs), `tdb.py` (USB file), `registers.py` (Шифрарник), `orders.py` (all order
   forms), `db.py` (all database access), `macc.py` (MAC C ↔ Cyrillic), `workdays.py` + `holidays.txt`, `ui.py`.
-- `tools/` — reverse-engineering helpers and the tests (`test_*.py`).
+- `tools/` — reverse-engineering helpers and the tests (`test_*.py`); `tools/run_tests.ps1` runs them all on a fresh
+  throwaway database (`-Runs 2` = twice, each on its own copy).
+- `requirements.txt` (Python packages for `demo/.venv`) and `docs/new_machine_setup.md` (step-by-step guide to move the
+  whole workplace — code, database, tests, Claude Code, REA/Ghidra — to another PC).
 - `extracted/` — recovered specifications (`vnnal_spec.md`, `nalXX_spec.md`), schema, SQL lists, handler map.
   Raw decompiled code/listings/form dumps (`extracted/asm|decomp|forms`) stay local (gitignored).
 - Local only (gitignored): `Nalozi/` (old program + data), `work/` (database copies), `app/settings.ini`, `.mcp.json`.
@@ -63,7 +66,8 @@ alozi`):
 
 ## How to work
 
-- **Run the tests right after every change**, on a fresh throwaway copy of the database, before reporting done:
+- **Run the tests right after every change** (`.\tools\run_tests.ps1 -Runs 2` does all of the following), on a fresh
+  throwaway copy of the database, before reporting done:
   restore `work/db/novnal_for_nalozi26.fbk` with `gbak -c` to a scratch `TEST.FDB`, point a `test_settings.ini` at it,
   run every `tools/test_*.py <test_settings.ini>` with `python -I -X utf8` (`-I` ignores `PYTHONIOENCODING`; without
   `-X utf8` Cyrillic output to a log file fails). Report failures honestly.
@@ -133,6 +137,11 @@ ministry PDFs and the seed files; `tools/import_konta.py` builds `konta_seed.csv
 **УПЛАТНИ СМЕТКИ register done and tested**: ribbon Шифрарник → Уплатни сметки (`registers.UplatniDialog` / `UplatnaDialog`, `uplatni.py`, `db.list_uplatni/save_uplatna/delete_uplatna/load_uplatni`, table `UPLATNI`; seed `extracted/ministry/uplatni_seed.csv` via `tools/load_uplatni_seed.py`; search, add/edit/delete when unused, code change refused when used in PROMET.podsmetprim, Печати/PDF, pick=True for order forms; `uplatni.to_podsmetprim(banka,kod,opstina)` → 11-digit treasury account). Next: order-form changes (61, 70 pick uplatna; 73/76 + 61/70 pick konto), then the other registers (конта, оператори, жиро-сметки/партнери, вработени), the report
 „Преглед на пратки по датум", login/operators, „Превземање на налози", the move to SQLite, and finally a custom theme.
 
+**KNOWN FAILURE (found 2026-10-28 with `tools/run_tests.ps1`, HEAD `75078bb`): 7 test files fail** (`test_nal60/61/62/70/76/80_form`,
+`test_workdays`) and the order dialogs cannot open: `orders._add_ellipsis_button` inserts the „…“ button into a *vertical*
+`wx.BoxSizer` with `wx.ALIGN_CENTER_VERTICAL` (wx asserts), the `except` fallback then adds the same window again
+(`!m_containingSizer` assertion). Fix: put the control and its button in a horizontal sizer instead of inserting into the
+control's own sizer. Fix this before building anything else on the order forms.
 **Order-form picks (IN PROGRESS, 2026-04 session):** helpers already in `app/orders.py` — `_order_opstina`, `pick_konto`, `pick_uplatna`, `_attach_pick`, `OrderDialog._wire_register_picks` / `_bind_konto_pick` / `_bind_uplatna_pick` (… button + empty kill-focus opens picker; field stays free text). 61/70: uplatna → 11-digit podsmetprim via INIT.opstina (default 103); rashod konto class 4; prihod konto class 7. 73/76: free account (no uplatni list); konto pick still applies where fields exist. **Before next session:** (1) confirm `orders.py` compiles (if/else around `_wire_register_picks` was briefly broken — fixed at end-session); (2) ensure `KontaDialog` sets `.chosen` on pick (UplatniDialog already does); (3) finish UI placement of … buttons if not visible on all forms; (4) add tests; (5) load uplatni seed on real new DB when user is ready (`PYTHONPATH=app python -X utf8 tools\load_uplatni_seed.py app\settings.ini` — never live `D:\nalozi`). Do **not** leave `tools/_wire_order_picks.py` (one-shot; deleted at end-session).
 
 Planned new feature (user, 2026-10-21 — build **after the registers**; the old program had nothing like it):
